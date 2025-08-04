@@ -306,6 +306,9 @@ print_page_contents_recursive(BTreeDescr *desc, OInMemoryBlkno blkno,
 	if (printData->options->printFixedFlags && O_PAGE_IS(p, HIKEYS_FIXED))
 		appendStringInfo(outbuf, ", hikeys fixed");
 
+	if (O_PAGE_IS(p, BROKEN_SPLIT))
+		appendStringInfo(outbuf, ", broken split");
+
 	appendStringInfo(outbuf, "\n");
 
 	appendStringInfo(outbuf, O_PAGE_IS(p, LEFTMOST) ? "    Leftmost, " : "    ");

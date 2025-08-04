@@ -520,9 +520,11 @@ check_walk_btree(BTreeCheckStatus *status, OInMemoryBlkno blkno,
 				 OInMemoryBlkno parentPagenum)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
+	BTreePageHeader *header = (BTreePageHeader *) p;
 	OrioleDBPageDesc *page_desc = O_GET_IN_MEMORY_PAGEDESC(blkno);
 	OBTreeFindPageContext *context = &status->context;
 	FileExtent	extent;
+	uint64		rightLink;
 
 	Assert(OInMemoryBlknoIsValid(blkno));
 
@@ -534,10 +536,16 @@ check_walk_btree(BTreeCheckStatus *status, OInMemoryBlkno blkno,
 	context->items[context->index].blkno = blkno;
 	context->items[context->index].pageChangeCount = O_PAGE_GET_CHANGE_COUNT(p);
 
-	if (O_PAGE_IS(p, BROKEN_SPLIT))
+	rightLink = header->rightLink;
+	if (RightLinkIsValid(rightLink))
 	{
-		elog(NOTICE, "BTree has a broken split.");
-		status->hasError = true;
+		Page	rightP = O_GET_IN_MEMORY_PAGE(RIGHTLINK_GET_BLKNO(rightLink));
+
+		if (O_PAGE_IS(rightP, BROKEN_SPLIT))
+		{
+			elog(NOTICE, "BTree has a broken split.");
+			status->hasError = true;
+		}
 	}
 
 	if (!O_PAGE_IS(p, LEAF))

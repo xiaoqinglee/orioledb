@@ -49,7 +49,7 @@ typedef struct BTreeInsertStackItem
 	Size		tuplen;
 	/* current level of the insert */
 	int			level;
-	/* blkno of the left page of incomplete split. */
+	/* blkno of the right page of incomplete split. */
 	OInMemoryBlkno rightBlkno;
 	/* is current item replace tuple */
 	bool		replace;
@@ -88,24 +88,34 @@ o_btree_split_is_incomplete(OInMemoryBlkno left_blkno, bool *relocked)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(left_blkno);
 	BTreePageHeader *header = (BTreePageHeader *) p;
+	uint64		rightLink = header->rightLink;
 
-	if (RightLinkIsValid(header->rightLink))
+	if (RightLinkIsValid(rightLink))
 	{
+		Page	rightP = O_GET_IN_MEMORY_PAGE(RIGHTLINK_GET_BLKNO(rightLink));
+
+		Assert(O_PAGE_GET_CHANGE_COUNT(rightP) == RIGHTLINK_GET_CHANGECOUNT(rightLink));
+
 		if (O_PAGE_IS(p, BROKEN_SPLIT))
 			return true;
 
 		/* wait for split finish */
-		while (RightLinkIsValid(header->rightLink) && !O_PAGE_IS(p, BROKEN_SPLIT))
+		while (RightLinkIsValid(rightLink) && !O_PAGE_IS(rightP, BROKEN_SPLIT))
 		{
 			relock_page(left_blkno);
 			*relocked = true;
+			rightLink = header->rightLink;
+			if (RightLinkIsValid(rightLink))
+			{
+				rightP = O_GET_IN_MEMORY_PAGE(RIGHTLINK_GET_BLKNO(rightLink));
+				Assert(O_PAGE_GET_CHANGE_COUNT(rightP) == RIGHTLINK_GET_CHANGECOUNT(rightLink));
+			}
 		}
 
 		/* split should be broken or ok after this */
-		Assert(O_PAGE_IS(p, BROKEN_SPLIT)
-			   || !RightLinkIsValid(header->rightLink));
+		Assert(O_PAGE_IS(rightP, BROKEN_SPLIT) || !RightLinkIsValid(rightLink));
 
-		if (O_PAGE_IS(p, BROKEN_SPLIT))
+		if (O_PAGE_IS(rightP, BROKEN_SPLIT))
 			return true;
 	}
 	return false;
@@ -257,25 +267,29 @@ o_btree_fix_page_split(BTreeDescr *desc, OInMemoryBlkno left_blkno)
 	OBTreeFindPageContext context;
 	Page		p = O_GET_IN_MEMORY_PAGE(left_blkno);
 	BTreePageHeader *header = (BTreePageHeader *) p;
+	BTreePageHeader *rightHeader = (BTreePageHeader *) p;
 	OFixedKey	key;
 	OInMemoryBlkno rightBlkno;
 	int			level = PAGE_GET_LEVEL(p);
 
-	Assert(O_PAGE_IS(p, BROKEN_SPLIT));
 	Assert(left_blkno != desc->rootInfo.rootPageBlkno);
 
 	iitem.context = &context;
 	copy_fixed_hikey(desc, &key, p);
-	START_CRIT_SECTION();
-	page_block_reads(left_blkno);
-	header->flags &= ~O_BTREE_FLAG_BROKEN_SPLIT;
 	rightBlkno = RIGHTLINK_GET_BLKNO(header->rightLink);
+	rightHeader = (BTreePageHeader *) O_GET_IN_MEMORY_PAGE(rightBlkno);
+	lock_page(rightBlkno);
+	Assert(O_PAGE_IS(O_GET_IN_MEMORY_PAGE(rightBlkno), BROKEN_SPLIT));
+	START_CRIT_SECTION();
+	page_block_reads(rightBlkno);
+	rightHeader->flags &= ~O_BTREE_FLAG_BROKEN_SPLIT;
 	/*
 	 * Register split.  That would put back O_BTREE_FLAG_BROKEN_SPLIT on
 	 * error.
 	 */
 	btree_register_inprogress_split(rightBlkno);
 	END_CRIT_SECTION();
+	unlock_page(rightBlkno);
 	unlock_page(left_blkno);
 
 	ppool_reserve_pages(desc->ppool, PPOOL_RESERVE_FIND, 2);
@@ -330,6 +344,7 @@ o_btree_insert_stack_push_split_item(BTreeInsertStackItem *insert_item,
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(left_blkno);
 	BTreePageHeader *header = (BTreePageHeader *) p;
+	BTreePageHeader *rightHeader;
 	BTreeInsertStackItem *new_item = palloc(sizeof(BTreeInsertStackItem));
 	OInMemoryBlkno	right_blkno;
 
@@ -351,12 +366,15 @@ o_btree_insert_stack_push_split_item(BTreeInsertStackItem *insert_item,
 	o_btree_split_fill_downlink_item(new_item, left_blkno, true);
 
 	/* Removes broken flag and unlock page. */
-	START_CRIT_SECTION();
-	page_block_reads(left_blkno);
-	header->flags &= ~O_BTREE_FLAG_BROKEN_SPLIT;
 	right_blkno = RIGHTLINK_GET_BLKNO(header->rightLink);
+	lock_page(right_blkno);
+	rightHeader = (BTreePageHeader *) O_GET_IN_MEMORY_PAGE(right_blkno);
+	START_CRIT_SECTION();
+	page_block_reads(right_blkno);
+	rightHeader->flags &= ~O_BTREE_FLAG_BROKEN_SPLIT;
 	btree_register_inprogress_split(right_blkno);
 	END_CRIT_SECTION();
+	unlock_page(right_blkno);
 	unlock_page(left_blkno);
 	insert_item->refind = true;
 

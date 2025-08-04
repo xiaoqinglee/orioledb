@@ -1177,13 +1177,15 @@ btree_mark_incomplete_splits(void)
 void
 btree_split_mark_finished(OInMemoryBlkno rightBlkno, bool use_lock, bool success)
 {
-	BTreePageHeader *header;
+	BTreePageHeader *leftHeader;
+	BTreePageHeader *rightHeader;
 	OrioleDBPageDesc *rightPageDesc = O_GET_IN_MEMORY_PAGEDESC(rightBlkno);
 	OInMemoryBlkno	leftBlkno;
 
 	leftBlkno = rightPageDesc->leftBlkno;
 	Assert(OInMemoryBlknoIsValid(leftBlkno));
-	if (use_lock)
+
+	if (use_lock && success)
 	{
 		while (true)
 		{
@@ -1199,23 +1201,34 @@ btree_split_mark_finished(OInMemoryBlkno rightBlkno, bool use_lock, bool success
 		}
 	}
 
-	header = (BTreePageHeader *) O_GET_IN_MEMORY_PAGE(leftBlkno);
+	lock_page(rightBlkno);
+	page_block_reads(rightBlkno);
 
-	Assert(RightLinkIsValid(header->rightLink));
-	Assert(!use_lock || !O_PAGE_IS(O_GET_IN_MEMORY_PAGE(leftBlkno), BROKEN_SPLIT));
+	START_CRIT_SECTION();
+
+	leftHeader = (BTreePageHeader *) O_GET_IN_MEMORY_PAGE(leftBlkno);
+	rightHeader = (BTreePageHeader *) O_GET_IN_MEMORY_PAGE(rightBlkno);
+
+	Assert(RightLinkIsValid(leftHeader->rightLink));
+	Assert(use_lock || success);
 
 	if (success)
 	{
-		header->flags &= ~O_BTREE_FLAG_BROKEN_SPLIT;
-		header->rightLink = InvalidRightLink;
+		rightHeader->flags &= ~O_BTREE_FLAG_BROKEN_SPLIT;
+		leftHeader->rightLink = InvalidRightLink;
 		rightPageDesc->leftBlkno = OInvalidInMemoryBlkno;
 	}
 	else
 	{
-		header->flags |= O_BTREE_FLAG_BROKEN_SPLIT;
+		Assert(!O_PAGE_IS(O_GET_IN_MEMORY_PAGE(rightBlkno), BROKEN_SPLIT));
+		rightHeader->flags |= O_BTREE_FLAG_BROKEN_SPLIT;
 	}
 
-	if (use_lock)
+	END_CRIT_SECTION();
+
+	unlock_page(rightBlkno);
+
+	if (use_lock && success)
 		unlock_page(leftBlkno);
 }
 
