@@ -1233,7 +1233,7 @@ read_page_from_disk(BTreeDescr *desc, Pointer img, uint64 downlink,
 				err = btree_smgr_read(desc, img + skipped, chkpNum, read_size, byte_offset) != read_size;
 
 				page_header = (BTreePageHeader *) img;
-				page_header->checkpointNum = header.chkpNum;
+				page_header->o_header.checkpointNum = header.chkpNum;
 			}
 		}
 	}
@@ -1612,7 +1612,7 @@ perform_page_io(BTreeDescr *desc, OInMemoryBlkno blkno,
 
 	EA_WRITE_INC(blkno);
 
-	less_num = header->checkpointNum < checkpoint_number;
+	less_num = header->o_header.checkpointNum < checkpoint_number;
 	if (less_num)
 	{
 		/*
@@ -1625,14 +1625,14 @@ perform_page_io(BTreeDescr *desc, OInMemoryBlkno blkno,
 			 * we need to update the written checkpoint number for the img too
 			 */
 			header = (BTreePageHeader *) img;
-			header->checkpointNum = checkpoint_number;
+			header->o_header.checkpointNum = checkpoint_number;
 			header = (BTreePageHeader *) page;
 		}
-		header->checkpointNum = checkpoint_number;
+		header->o_header.checkpointNum = checkpoint_number;
 	}
 	else
 	{
-		Assert(header->checkpointNum == checkpoint_number);
+		Assert(header->o_header.checkpointNum == checkpoint_number);
 	}
 
 	write_img = get_write_img(desc, img, &write_size);
@@ -2277,7 +2277,7 @@ evict_btree(BTreeDescr *desc, uint32 checkpoint_number)
 	bool		hasMetaLock = LWLockHeldByMe(&checkpoint_state->oTablesMetaLock);
 
 	Assert(ORootPageIsValid(desc) && OMetaPageIsValid(desc) &&
-		   O_PAGE_STATE_IS_LOCKED(pg_atomic_read_u32(&(O_PAGE_HEADER(rootPageBlkno)->state))));
+		   O_PAGE_STATE_IS_LOCKED(pg_atomic_read_u64(&(O_PAGE_HEADER(rootPageBlkno)->state))));
 
 	/* we check it before */
 	Assert(!RightLinkIsValid(BTREE_PAGE_GET_RIGHTLINK(rootPageBlkno)));

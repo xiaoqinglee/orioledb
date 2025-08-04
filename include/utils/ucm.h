@@ -13,10 +13,10 @@
 #ifndef __UCM_H__
 #define __UCM_H__
 
-#define InvalidUsageCount 0xFF
-#define UCM_USAGE_LEVELS	7
-#define UCM_FREE_PAGES_LEVEL 7
-#define UCM_LEVELS			8
+#define UCM_INVALID_LEVEL (0xF)
+#define UCM_USAGE_LEVELS	(0x7)
+#define UCM_FREE_PAGES_LEVEL (0x7)
+#define UCM_LEVELS			(0x8)
 
 typedef struct UsageCountMap
 {
@@ -33,7 +33,7 @@ typedef struct UsageCountMap
 extern Size estimate_ucm_space(UsageCountMap *map, OInMemoryBlkno offset, OInMemoryBlkno size);
 extern void init_ucm(UsageCountMap *map, Pointer ptr, bool found);
 extern void page_inc_usage_count(UsageCountMap *map, OInMemoryBlkno blkno,
-								 uint32 usageCount, bool no_skip);
+								 bool no_skip);
 extern void page_change_usage_count(UsageCountMap *map, OInMemoryBlkno blkno, uint32 usageCount);
 extern bool ucm_check_map(UsageCountMap *map);
 extern bool ucm_epoch_needs_shift(UsageCountMap *map);

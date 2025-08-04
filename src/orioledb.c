@@ -1129,8 +1129,7 @@ ppools_shmem_init(Pointer ptr, bool found)
 			Page		p = O_GET_IN_MEMORY_PAGE(i);
 			OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
 
-			pg_atomic_init_u32(&(O_PAGE_HEADER(p)->state), PAGE_STATE_INVALID_PROCNO);
-			pg_atomic_init_u32(&(O_PAGE_HEADER(p)->usageCount), UCM_FREE_PAGES_LEVEL);
+			pg_atomic_init_u64(&(O_PAGE_HEADER(p)->state), O_PAGE_STATE_SET_USAGE_COUNT(PAGE_STATE_INVALID_PROCNO, UCM_FREE_PAGES_LEVEL));
 			header->pageChangeCount = 0;
 		}
 

@@ -100,7 +100,6 @@ struct BTreePageItemLocator
 typedef struct
 {
 	OrioleDBPageHeader o_header;
-	uint32		checkpointNum;
 
 	/* Link to the page-level undo item and corresponding CSN */
 	UndoLocation undoLocation;

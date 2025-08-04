@@ -274,9 +274,9 @@ typedef struct
  */
 typedef struct
 {
-	pg_atomic_uint32 state;
-	pg_atomic_uint32 usageCount;
+	pg_atomic_uint64 state;
 	uint32		pageChangeCount;
+	uint32		checkpointNum;
 } OrioleDBPageHeader;
 
 #define O_PAGE_HEADER_SIZE		sizeof(OrioleDBPageHeader)

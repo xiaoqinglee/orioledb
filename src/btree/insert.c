@@ -201,8 +201,8 @@ o_btree_finish_root_split_internal(BTreeDescr *desc,
 	/* restore checkpoint number and file offset for the rootPageBlkno */
 	left_header = (BTreePageHeader *) left_page;
 	root_header = (BTreePageHeader *) p;
-	root_header->checkpointNum = left_header->checkpointNum;
-	left_header->checkpointNum = 0;
+	root_header->o_header.checkpointNum = left_header->o_header.checkpointNum;
+	left_header->o_header.checkpointNum = 0;
 	page_desc->fileExtent = root_extent;
 
 	Assert(left_blkno);

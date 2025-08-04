@@ -35,7 +35,7 @@
 bool
 partial_load_hikeys_chunk(PartialPageState *partial, Page img)
 {
-	uint32		imgState,
+	uint64		imgState,
 				srcState;
 	Page		src = partial->src;
 	LocationIndex chunkBegin,
@@ -57,8 +57,8 @@ partial_load_hikeys_chunk(PartialPageState *partial, Page img)
 
 	pg_read_barrier();
 
-	imgState = pg_atomic_read_u32(&(O_PAGE_HEADER(img)->state));
-	srcState = pg_atomic_read_u32(&(O_PAGE_HEADER(src)->state));
+	imgState = pg_atomic_read_u64(&(O_PAGE_HEADER(img)->state));
+	srcState = pg_atomic_read_u64(&(O_PAGE_HEADER(src)->state));
 	if ((imgState & PAGE_STATE_CHANGE_COUNT_MASK) != (srcState & PAGE_STATE_CHANGE_COUNT_MASK) ||
 		O_PAGE_STATE_READ_IS_BLOCKED(srcState))
 		return false;
@@ -77,7 +77,7 @@ bool
 partial_load_chunk(PartialPageState *partial, Page img,
 				   OffsetNumber chunkOffset, BTreePageItemLocator *loc)
 {
-	uint32		imgState = pg_atomic_read_u32(&(O_PAGE_HEADER(img)->state)),
+	uint64		imgState = pg_atomic_read_u64(&(O_PAGE_HEADER(img)->state)),
 				srcState;
 	Page		src = partial->src;
 	LocationIndex chunkBegin,
@@ -127,7 +127,7 @@ partial_load_chunk(PartialPageState *partial, Page img,
 
 		pg_read_barrier();
 
-		srcState = pg_atomic_read_u32(&(O_PAGE_HEADER(src)->state));
+		srcState = pg_atomic_read_u64(&(O_PAGE_HEADER(src)->state));
 		if ((imgState & PAGE_STATE_CHANGE_COUNT_MASK) != (srcState & PAGE_STATE_CHANGE_COUNT_MASK) ||
 			O_PAGE_STATE_READ_IS_BLOCKED(srcState))
 			return false;
@@ -142,7 +142,7 @@ partial_load_chunk(PartialPageState *partial, Page img,
 
 	pg_read_barrier();
 
-	srcState = pg_atomic_read_u32(&(O_PAGE_HEADER(src)->state));
+	srcState = pg_atomic_read_u64(&(O_PAGE_HEADER(src)->state));
 	if ((imgState & PAGE_STATE_CHANGE_COUNT_MASK) != (srcState & PAGE_STATE_CHANGE_COUNT_MASK) ||
 		O_PAGE_STATE_READ_IS_BLOCKED(srcState))
 		return false;

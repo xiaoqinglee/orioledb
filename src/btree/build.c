@@ -181,7 +181,7 @@ put_item_to_stack(BTreeDescr *desc, OIndexBuildStackItem *stack, int level,
 		new_page_header->rightLink = InvalidRightLink;
 		new_page_header->csn = COMMITSEQNO_FROZEN;
 		new_page_header->undoLocation = InvalidUndoLocation;
-		new_page_header->checkpointNum = 0;
+		new_page_header->o_header.checkpointNum = 0;
 		new_page_header->prevInsertOffset = MaxOffsetNumber;
 
 		new_page_header->flags = O_BTREE_FLAG_RIGHTMOST;
@@ -196,7 +196,7 @@ put_item_to_stack(BTreeDescr *desc, OIndexBuildStackItem *stack, int level,
 		header->rightLink = InvalidRightLink;
 		header->csn = COMMITSEQNO_FROZEN;
 		header->undoLocation = InvalidUndoLocation;
-		header->checkpointNum = 0;
+		header->o_header.checkpointNum = 0;
 		header->prevInsertOffset = MaxOffsetNumber;
 
 		header->flags &= ~O_BTREE_FLAG_RIGHTMOST;
@@ -369,7 +369,7 @@ btree_write_index_data(BTreeDescr *desc, TupleDesc tupdesc,
 	root_page_header->rightLink = InvalidRightLink;
 	root_page_header->csn = COMMITSEQNO_FROZEN;
 	root_page_header->undoLocation = InvalidUndoLocation;
-	root_page_header->checkpointNum = 0;
+	root_page_header->o_header.checkpointNum = 0;
 	root_page_header->prevInsertOffset = MaxOffsetNumber;
 
 	if (!O_PAGE_IS(root_page, LEAF))

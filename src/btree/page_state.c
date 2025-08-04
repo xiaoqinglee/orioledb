@@ -47,7 +47,7 @@
 typedef struct
 {
 	OInMemoryBlkno blkno;
-	uint32		state;
+	uint64		state;
 } MyLockedPage;
 
 static MyLockedPage myLockedPages[MAX_PAGES_PER_PROCESS];
@@ -99,21 +99,21 @@ get_my_locked_page_index(OInMemoryBlkno blkno)
 }
 
 static void
-my_locked_page_add(OInMemoryBlkno blkno, uint32 state)
+my_locked_page_add(OInMemoryBlkno blkno, uint64 state)
 {
 	Assert(get_my_locked_page_index(blkno) < 0);
 	Assert(numberOfMyLockedPages < MAX_PAGES_PER_PROCESS);
 
-	Assert(pg_atomic_read_u32(&((OrioleDBPageHeader *) O_GET_IN_MEMORY_PAGE(blkno))->state) & PAGE_STATE_LOCKED_FLAG);
+	Assert(pg_atomic_read_u64(&((OrioleDBPageHeader *) O_GET_IN_MEMORY_PAGE(blkno))->state) & PAGE_STATE_LOCKED_FLAG);
 	myLockedPages[numberOfMyLockedPages].blkno = blkno;
 	myLockedPages[numberOfMyLockedPages++].state = state;
 }
 
-static uint32
+static uint64
 my_locked_page_del(OInMemoryBlkno blkno)
 {
 	int			i = get_my_locked_page_index(blkno);
-	uint32		state;
+	uint64		state;
 
 	Assert(i >= 0 && i < MAX_PAGES_PER_PROCESS);
 	state = myLockedPages[i].state;
@@ -122,7 +122,7 @@ my_locked_page_del(OInMemoryBlkno blkno)
 	return state;
 }
 
-static uint32
+static uint64
 my_locked_page_get_state(OInMemoryBlkno blkno)
 {
 	int			i = get_my_locked_page_index(blkno);
@@ -131,20 +131,20 @@ my_locked_page_get_state(OInMemoryBlkno blkno)
 	return myLockedPages[i].state;
 }
 
-static uint32
+static uint64
 lock_page_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
 	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
-	uint32		state;
+	uint64		state;
 	LockerShmemState *lockerState = &lockerStates[pgprocnum];
 
 	Assert(pgprocnum < max_procs);
 
-	state = pg_atomic_read_u32(&header->state);
+	state = pg_atomic_read_u64(&header->state);
 	while (true)
 	{
-		uint32		newState;
+		uint64		newState;
 
 		if (!O_PAGE_STATE_IS_LOCKED(state))
 		{
@@ -160,7 +160,7 @@ lock_page_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum)
 			newState |= pgprocnum;
 		}
 
-		if (pg_atomic_compare_exchange_u32(&header->state, &state, newState))
+		if (pg_atomic_compare_exchange_u64(&header->state, &state, newState))
 			break;
 	}
 
@@ -184,23 +184,23 @@ typedef enum
 static LockPageResult
 lock_page_or_queue_or_split_detect(BTreeDescr *desc, OInMemoryBlkno *blkno,
 								   uint32 *pageChangeCount, uint32 pgprocnum,
-								   PageImg *img, OTuple tuple, uint32 *prevState)
+								   PageImg *img, OTuple tuple, uint64 *prevState)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(*blkno);
 	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
 	OrioleDBPageHeader *imgHeader = (OrioleDBPageHeader *) img->img;
-	uint32		state;
+	uint64		state;
 	LockerShmemState *lockerState = &lockerStates[pgprocnum];
 
 	Assert(pgprocnum < max_procs);
 
-	state = pg_atomic_read_u32(&header->state);
+	state = pg_atomic_read_u64(&header->state);
 	while (true)
 	{
-		uint32		newState;
+		uint64		newState;
 
 		if (!img->load ||
-			(state & PAGE_STATE_CHANGE_COUNT_MASK) != (pg_atomic_read_u32(&imgHeader->state) & PAGE_STATE_CHANGE_COUNT_MASK))
+			(state & PAGE_STATE_CHANGE_COUNT_MASK) != (pg_atomic_read_u64(&imgHeader->state) & PAGE_STATE_CHANGE_COUNT_MASK))
 		{
 			if (!o_btree_read_page(desc, *blkno, *pageChangeCount, img->img,
 								   COMMITSEQNO_INPROGRESS, NULL, BTreeKeyNone, NULL,
@@ -227,7 +227,7 @@ lock_page_or_queue_or_split_detect(BTreeDescr *desc, OInMemoryBlkno *blkno,
 						p = O_GET_IN_MEMORY_PAGE(*blkno);
 						header = (OrioleDBPageHeader *) p;
 						Assert(get_my_locked_page_index(*blkno) < 0);
-						state = pg_atomic_read_u32(&header->state);
+						state = pg_atomic_read_u64(&header->state);
 						continue;
 					}
 					else
@@ -253,7 +253,7 @@ lock_page_or_queue_or_split_detect(BTreeDescr *desc, OInMemoryBlkno *blkno,
 			newState |= pgprocnum;
 		}
 
-		if (pg_atomic_compare_exchange_u32(&header->state, &state, newState))
+		if (pg_atomic_compare_exchange_u64(&header->state, &state, newState))
 			break;
 	}
 
@@ -269,18 +269,18 @@ lock_page_or_queue_or_split_detect(BTreeDescr *desc, OInMemoryBlkno *blkno,
  * This function finishes when page is enable to read or we managed to lock
  * the page list.
  */
-static uint32
+static uint64
 read_enabled_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
 	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
-	uint32		state;
+	uint64		state;
 	LockerShmemState *lockerState = &lockerStates[pgprocnum];
 
-	state = pg_atomic_read_u32(&header->state);
+	state = pg_atomic_read_u64(&header->state);
 	while (true)
 	{
-		uint32		newState;
+		uint64		newState;
 
 		if (!O_PAGE_STATE_READ_IS_BLOCKED(state))
 		{
@@ -296,26 +296,26 @@ read_enabled_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum)
 			newState |= pgprocnum;
 		}
 
-		if (pg_atomic_compare_exchange_u32(&header->state, &state, newState))
+		if (pg_atomic_compare_exchange_u64(&header->state, &state, newState))
 			break;
 	}
 
 	return state;
 }
 
-static uint32
+static uint64
 state_changed_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum,
-					  uint32 oldState)
+					  uint64 oldState)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
 	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
-	uint32		state;
+	uint64		state;
 	LockerShmemState *lockerState = &lockerStates[pgprocnum];
 
-	state = pg_atomic_read_u32(&header->state);
+	state = pg_atomic_read_u64(&header->state);
 	while (true)
 	{
-		uint32		newState;
+		uint64		newState;
 
 		if ((state & PAGE_STATE_CHANGE_COUNT_MASK) !=
 			(oldState & PAGE_STATE_CHANGE_COUNT_MASK))
@@ -332,7 +332,7 @@ state_changed_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum,
 			newState |= pgprocnum;
 		}
 
-		if (pg_atomic_compare_exchange_u32(&header->state, &state, newState))
+		if (pg_atomic_compare_exchange_u64(&header->state, &state, newState))
 			break;
 	}
 
@@ -348,18 +348,15 @@ void
 lock_page(OInMemoryBlkno blkno)
 {
 	UsageCountMap *ucm = &(get_ppool_by_blkno(blkno)->ucm);
-	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
-	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
 	LockerShmemState *lockerState = &lockerStates[MYPROCNUMBER];
-	uint32		prevState;
+	uint64		prevState;
 	int			extraWaits = 0;
 
 	Assert(get_my_locked_page_index(blkno) < 0);
 
 	EA_LOCK_INC(blkno);
 
-	page_inc_usage_count(ucm, blkno,
-						 pg_atomic_read_u32(&header->usageCount), false);
+	page_inc_usage_count(ucm, blkno, false);
 
 	while (true)
 	{
@@ -400,9 +397,7 @@ lock_page_with_tuple(BTreeDescr *desc,
 					 OTupleXactInfo xactInfo, OTuple tuple, bool *upwards)
 {
 	UsageCountMap *ucm;
-	Page		p = O_GET_IN_MEMORY_PAGE(*blkno);
-	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
-	uint32		prevState;
+	uint64		prevState;
 	int			extraWaits = 0;
 	LockerShmemState *lockerState = &lockerStates[MYPROCNUMBER];
 	bool		keySerialized = false;
@@ -509,8 +504,7 @@ lock_page_with_tuple(BTreeDescr *desc,
 
 	EA_LOCK_INC(*blkno);
 	ucm = &(get_ppool_by_blkno(*blkno)->ucm);
-	page_inc_usage_count(ucm, *blkno,
-						 pg_atomic_read_u32(&header->usageCount), false);
+	page_inc_usage_count(ucm, *blkno, false);
 
 	my_locked_page_add(*blkno, prevState | PAGE_STATE_LOCKED_FLAG);
 
@@ -564,7 +558,7 @@ page_wait_for_changecount(OInMemoryBlkno blkno, uint32 state)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
 	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
-	uint32		curState;
+	uint64		curState;
 	int			extraWaits = 0;
 	LockerShmemState *lockerState = &lockerStates[MYPROCNUMBER];
 
@@ -586,7 +580,7 @@ page_wait_for_changecount(OInMemoryBlkno blkno, uint32 state)
 			PGSemaphoreLock(MyProc->sem);
 			if (!lockerState->pageWaiting)
 			{
-				curState = pg_atomic_read_u32(&header->state);
+				curState = pg_atomic_read_u64(&header->state);
 				if ((curState & PAGE_STATE_CHANGE_COUNT_MASK) !=
 					(state & PAGE_STATE_CHANGE_COUNT_MASK))
 					exit_loop = true;
@@ -620,18 +614,14 @@ void
 relock_page(OInMemoryBlkno blkno)
 {
 	UsageCountMap *ucm = &(get_ppool_by_blkno(blkno)->ucm);
-	OrioleDBPageHeader *header;
-	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
-	uint32		state;
+	uint64		state;
 
 	state = my_locked_page_get_state(blkno);
 	unlock_page(blkno);
 
 	STOPEVENT(STOPEVENT_RELOCK_PAGE, NULL);
 
-	header = (OrioleDBPageHeader *) p;
-	page_inc_usage_count(ucm, blkno,
-						 pg_atomic_read_u32(&header->usageCount), false);
+	page_inc_usage_count(ucm, blkno, false);
 
 	page_wait_for_changecount(blkno, state);
 	lock_page(blkno);
@@ -644,9 +634,9 @@ bool
 try_lock_page(OInMemoryBlkno blkno)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
-	uint32		state;
+	uint64		state;
 
-	state = pg_atomic_fetch_or_u32(&(O_PAGE_HEADER(p)->state),
+	state = pg_atomic_fetch_or_u64(&(O_PAGE_HEADER(p)->state),
 								   PAGE_STATE_LOCKED_FLAG);
 
 	if (O_PAGE_STATE_IS_LOCKED(state))
@@ -665,7 +655,7 @@ delare_page_as_locked(OInMemoryBlkno blkno)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
 
-	my_locked_page_add(blkno, pg_atomic_read_u32(&(O_PAGE_HEADER(p)->state)));
+	my_locked_page_add(blkno, pg_atomic_read_u64(&(O_PAGE_HEADER(p)->state)));
 }
 
 /*
@@ -684,13 +674,13 @@ void
 page_block_reads(OInMemoryBlkno blkno)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
-	uint32		state;
+	uint64		state;
 	int			i = get_my_locked_page_index(blkno);
 
 	Assert((myLockedPages[i].state & PAGE_STATE_CHANGE_NON_WAITERS_MASK) ==
-		   (pg_atomic_read_u32(&(O_PAGE_HEADER(p)->state)) & PAGE_STATE_CHANGE_NON_WAITERS_MASK));
+		   (pg_atomic_read_u64(&(O_PAGE_HEADER(p)->state)) & PAGE_STATE_CHANGE_NON_WAITERS_MASK));
 
-	state = pg_atomic_fetch_or_u32(&(O_PAGE_HEADER(p)->state), PAGE_STATE_NO_READ_FLAG);
+	state = pg_atomic_fetch_or_u64(&(O_PAGE_HEADER(p)->state), PAGE_STATE_NO_READ_FLAG);
 	Assert((state & PAGE_STATE_LOCKED_FLAG));
 	myLockedPages[i].state = state | PAGE_STATE_NO_READ_FLAG;
 }
@@ -704,7 +694,7 @@ get_waiters_with_tuples(BTreeDescr *desc,
 	uint32		pgprocnum;
 	int			count = 0;
 
-	pgprocnum = pg_atomic_read_u32(&(O_PAGE_HEADER(p)->state)) & PAGE_STATE_LIST_TAIL_MASK;
+	pgprocnum = pg_atomic_read_u64(&(O_PAGE_HEADER(p)->state)) & PAGE_STATE_LIST_TAIL_MASK;
 
 	while (pgprocnum != PAGE_STATE_INVALID_PROCNO)
 	{
@@ -739,20 +729,7 @@ wakeup_waiters_with_tuples(OInMemoryBlkno blkno,
 						   int procnums[BTREE_PAGE_MAX_SPLIT_ITEMS],
 						   int count)
 {
-	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
-	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
 	int			i;
-	uint32		state;
-	uint32		pgprocnum,
-				prevPgprocnum,
-				newTail,
-				tail,
-				wakeupTail = PAGE_STATE_INVALID_PROCNO,
-				prevTail = PAGE_STATE_INVALID_PROCNO,
-				prevTailReplace = PAGE_STATE_INVALID_PROCNO;
-	int			count1 = 0,
-				count2 = 0,
-				count3 = 0;
 
 	Assert(count > 0);
 
@@ -953,7 +930,7 @@ unlock_page_internal(OInMemoryBlkno blkno, bool split)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
 	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
-	uint32		state;
+	uint64		state;
 	uint32		pgprocnum,
 				prevPgprocnum,
 				newTail,
@@ -971,10 +948,10 @@ unlock_page_internal(OInMemoryBlkno blkno, bool split)
 
 	unlock_check_page(blkno);
 
-	state = pg_atomic_read_u32(&header->state);
+	state = pg_atomic_read_u64(&header->state);
 	while (true)
 	{
-		uint32		newState;
+		uint64		newState;
 
 		newTail = tail = pgprocnum = state & PAGE_STATE_LIST_TAIL_MASK;
 
@@ -1067,7 +1044,7 @@ unlock_page_internal(OInMemoryBlkno blkno, bool split)
 			newState += PAGE_STATE_CHANGE_COUNT_ONE;
 		newState |= newTail;
 
-		if (pg_atomic_compare_exchange_u32(&header->state, &state, newState))
+		if (pg_atomic_compare_exchange_u64(&header->state, &state, newState))
 			break;
 
 		prevTail = tail;

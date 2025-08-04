@@ -588,11 +588,9 @@ btree_check_compression_recursive(BTreeDescr *desc, BTreeCompressStats *stats, O
 {
 	char		buf[ORIOLEDB_BLCKSZ];
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
-	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
 	size_t		compressed_size;
 
-	page_inc_usage_count(&desc->ppool->ucm, blkno,
-						 pg_atomic_read_u32(&header->usageCount), false);
+	page_inc_usage_count(&desc->ppool->ucm, blkno, false);
 
 	context->index++;
 	context->items[context->index].blkno = blkno;
