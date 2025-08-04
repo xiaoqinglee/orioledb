@@ -668,6 +668,13 @@ o_btree_insert_split(BTreeInsertStackItem *insert_item,
 		root_split_left_blkno = ppool_get_page(desc->ppool, reserve_kind);
 	right_blkno = ppool_get_page(desc->ppool, reserve_kind);
 
+	/*
+	 * Move hikeyBlkno of split.  This change is atomic, no need to
+	 * bother about change count.
+	 */
+	if (checkpoint_state->stack[insert_item->level].hikeyBlkno == blkno)
+		checkpoint_state->stack[insert_item->level].hikeyBlkno = right_blkno;
+
 	perform_page_split(desc, blkno, right_blkno, items,
 					   left_count, split_key, split_key_len,
 					   csn, undoLocation);
