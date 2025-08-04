@@ -1039,7 +1039,11 @@ o_btree_normal_modify(BTreeDescr *desc, BTreeOperationType action,
 		action == BTreeOperationInsert && tupleType == BTreeKeyLeafTuple)
 	{
 		if (desc->undoType != UndoLogNone)
+		{
 			release_undo_size(desc->undoType);
+			if (GET_PAGE_LEVEL_UNDO_TYPE(desc->undoType) != desc->undoType)
+				release_undo_size(GET_PAGE_LEVEL_UNDO_TYPE(desc->undoType));
+		}
 		ppool_release_reserved(desc->ppool, PPOOL_RESERVE_INSERT);
 		return OBTreeModifyResultInserted;
 	}
