@@ -860,7 +860,6 @@ o_btree_insert_item(BTreeInsertStackItem *insert_item, int reserve_kind)
 		int			tupleWaiterProcnums[BTREE_PAGE_MAX_SPLIT_ITEMS];
 		TupleWaiterInfo tupleWaiterInfos[BTREE_PAGE_MAX_SPLIT_ITEMS];
 		int			tupleWaitersCount;
-		int			insertSize;
 		bool		next = false;
 
 		Assert(desc->ppool->numPagesReserved[reserve_kind] >= 2);
@@ -957,10 +956,10 @@ o_btree_insert_item(BTreeInsertStackItem *insert_item, int reserve_kind)
 		if (insert_item->level == 0)
 		{
 			tupleWaitersCount = get_waiters_with_tuples(desc, blkno, tupleWaiterProcnums);
-			insertSize = get_tuple_waiter_infos(desc,
-												tupleWaiterProcnums,
-												tupleWaiterInfos,
-												tupleWaitersCount);
+			(void) get_tuple_waiter_infos(desc,
+										  tupleWaiterProcnums,
+										  tupleWaiterInfos,
+										  tupleWaitersCount);
 
 			qsort_arg(tupleWaiterInfos,
 					  tupleWaitersCount,
@@ -979,29 +978,13 @@ o_btree_insert_item(BTreeInsertStackItem *insert_item, int reserve_kind)
 		{
 			BTreeSplitItems items;
 			BTreeSplitItems newItems;
-			int			insertCount,
-						i,
+			int			i,
 						waitersWakeupCount = 0;
 			CommitSeqNo csn;
 			bool		needsCompaction;
 			bool		needsUndo;
 			OffsetNumber offset;
 			bool		split;
-
-			insertCount = tupleWaitersCount;
-
-			if (!insert_item->replace)
-			{
-				insertCount++;
-				insertSize += tupheaderlen + MAXALIGN(insert_item->tuplen);
-			}
-			else
-			{
-				int			prevItemLen = BTREE_PAGE_GET_ITEM_SIZE(p, &loc);
-
-				if (prevItemLen < tupheaderlen + MAXALIGN(insert_item->tuplen))
-					insertSize += tupheaderlen + MAXALIGN(insert_item->tuplen) - prevItemLen;
-			}
 
 			offset = BTREE_PAGE_LOCATOR_GET_OFFSET(p, &loc);
 

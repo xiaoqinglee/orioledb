@@ -941,10 +941,6 @@ unlock_page_internal(OInMemoryBlkno blkno, bool split)
 				exclusive = PAGE_STATE_INVALID_PROCNO,
 				exclusivePrev;
 	bool		wokeup_exclusive = false;
-	int			count1 = 0,
-				count2 = 0,
-				count3 = 0,
-				count4 = 0;
 
 	unlock_check_page(blkno);
 
@@ -979,12 +975,6 @@ unlock_page_internal(OInMemoryBlkno blkno, bool split)
 				Assert(pgprocnum != wakeupTail);
 				lockerState->next = wakeupTail;
 				wakeupTail = pgprocnum;
-				if (lockerState->inserted)
-					count1++;
-				else if (BlockNumberIsValid(lockerState->blkno))
-					count2++;
-				else
-					count3++;
 
 				pgprocnum = next;
 			}
@@ -996,7 +986,6 @@ unlock_page_internal(OInMemoryBlkno blkno, bool split)
 					exclusivePrev = prevPgprocnum;
 				}
 
-				count4++;
 				prevPgprocnum = pgprocnum;
 				pgprocnum = lockerState->next;
 			}
@@ -1052,8 +1041,6 @@ unlock_page_internal(OInMemoryBlkno blkno, bool split)
 	}
 
 	my_locked_page_del(blkno);
-
-/* 	elog(LOG, "unlock %u %d %d %d %d", blkno, count1, count2, count3, count4); */
 
 	pgprocnum = wakeupTail;
 	while (pgprocnum != PAGE_STATE_INVALID_PROCNO)
