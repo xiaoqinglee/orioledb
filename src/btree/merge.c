@@ -430,7 +430,20 @@ btree_try_merge_and_unlock(BTreeDescr *desc, OInMemoryBlkno blkno,
 
 				Assert(DOWNLINK_IS_IN_MEMORY(left_tuph->downlink));
 				left_blkno = DOWNLINK_GET_IN_MEMORY_BLKNO(left_tuph->downlink);
-				lock_page(left_blkno);
+
+				/*
+				 * Lock order right => left is dangerous for deadlocks.  So,
+				 * we don't wait here, but just optimistically try to lock.
+				 * Other lock waiters would need some time to wake-up and grab
+				 * the lock.  So, give up and give them a chance.
+				 */
+				if (!try_lock_page(left_blkno))
+				{
+					unlock_page(parent_blkno);
+					unlock_page(target_blkno);
+					target_blkno = OInvalidInMemoryBlkno;
+					break;
+				}
 				left = O_GET_IN_MEMORY_PAGE(left_blkno);
 
 				io_num = O_GET_IN_MEMORY_PAGEDESC(target_blkno)->ionum;
