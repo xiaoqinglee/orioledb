@@ -705,11 +705,6 @@ get_waiters_with_tuples(BTreeDescr *desc,
 			lockerState->pageChangeCount == O_PAGE_HEADER(p)->pageChangeCount &&
 			ORelOidsIsEqual(desc->oids, lockerState->reloids))
 		{
-			OTuple		tuple;
-
-			tuple.formatFlags = lockerState->tupleFlags;
-			tuple.data = &lockerState->tupleData.fixedData[BTreeLeafTuphdrSize];
-
 			result[count++] = pgprocnum;
 			if (count >= BTREE_PAGE_MAX_SPLIT_ITEMS)
 			{
@@ -939,7 +934,7 @@ unlock_page_internal(OInMemoryBlkno blkno, bool split)
 				prevTail = PAGE_STATE_INVALID_PROCNO,
 				prevTailReplace = PAGE_STATE_INVALID_PROCNO,
 				exclusive = PAGE_STATE_INVALID_PROCNO,
-				exclusivePrev;
+				exclusivePrev = PAGE_STATE_INVALID_PROCNO;
 	bool		wokeup_exclusive = false;
 
 	unlock_check_page(blkno);

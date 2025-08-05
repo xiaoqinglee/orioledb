@@ -377,7 +377,7 @@ find_page(OBTreeFindPageContext *context, void *key, BTreeKeyType keyType,
 				imageFlag = BTREE_PAGE_FIND_IS(context, IMAGE),
 				tryFlag = BTREE_PAGE_FIND_IS(context, TRY_LOCK),
 				fixLeafFlag = BTREE_PAGE_FIND_IS(context, FIX_LEAF_SPLIT),
-				noFixFlag = BTREE_PAGE_FIND_IS(context, NO_FIX_SPLIT),
+				noFixFlag PG_USED_FOR_ASSERTS_ONLY = BTREE_PAGE_FIND_IS(context, NO_FIX_SPLIT),
 				keepLokeyFlag = BTREE_PAGE_FIND_IS(context, KEEP_LOKEY),
 				downlinkLocationFlag = BTREE_PAGE_FIND_IS(context, DOWNLINK_LOCATION);
 	bool		shmemIsReloaded = false;
