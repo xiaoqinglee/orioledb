@@ -43,6 +43,13 @@
 
 #define BTREE_PAGE_MAX_SPLIT_ITEMS (2 * BTREE_PAGE_MAX_CHUNK_ITEMS)
 
+typedef enum
+{
+	OLockPageWithTupleResultLocked,
+	OLockPageWithTupleResultRefindNeeded,
+	OLockPageWithTupleResultInserted
+} OLockPageWithTupleResult;
+
 /*
  * Enable this to recheck page struct on every unlock.
  */
@@ -62,10 +69,11 @@ extern void wakeup_waiters_with_tuples(OInMemoryBlkno blkno,
 									   int procnums[BTREE_PAGE_MAX_SPLIT_ITEMS],
 									   int count);
 extern void lock_page(OInMemoryBlkno blkno);
-extern bool lock_page_with_tuple(BTreeDescr *desc,
-								 OInMemoryBlkno *blkno, uint32 *pageChangeCount,
-								 OTupleXactInfo xactInfo, OTuple tuple,
-								 bool *upwards);
+extern OLockPageWithTupleResult lock_page_with_tuple(BTreeDescr *desc,
+													 OInMemoryBlkno *blkno,
+													 uint32 *pageChangeCount,
+													 OTupleXactInfo xactInfo,
+													 OTuple tuple);
 extern void relock_page(OInMemoryBlkno blkno);
 extern bool try_lock_page(OInMemoryBlkno blkno);
 extern void delare_page_as_locked(OInMemoryBlkno blkno);

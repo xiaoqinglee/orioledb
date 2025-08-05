@@ -488,7 +488,7 @@ waiter_info_cmp(const void *a, const void *b, void *arg)
 }
 
 static bool
-merge_waited_tuples(BTreeDescr *desc, BTreeSplitItems *outputItems,
+merge_waited_tuples(BTreeDescr *desc, Page p, BTreeSplitItems *outputItems,
 					BTreeSplitItems *inputItems,
 					TupleWaiterInfo tupleWaiterInfos[BTREE_PAGE_MAX_SPLIT_ITEMS],
 					int tupleWaitersCount)
@@ -894,6 +894,8 @@ o_btree_insert_item(BTreeInsertStackItem *insert_item, int reserve_kind)
 
 			if (insert_item->refind)
 			{
+				OFindPageResult result PG_USED_FOR_ASSERTS_ONLY;
+
 				/*
 				 * Re-find appropriate tree page.  It might happen that parent
 				 * page is not available in context.  That may happen due to
@@ -902,13 +904,14 @@ o_btree_insert_item(BTreeInsertStackItem *insert_item, int reserve_kind)
 				 */
 				BTREE_PAGE_FIND_UNSET(curContext, IMAGE);
 				if (curContext->index >= 0)
-					refind_page(curContext, &insert_item->tuple, kind,
-								insert_item->level,
-								curContext->items[curContext->index].blkno,
-								curContext->items[curContext->index].pageChangeCount);
+					result = refind_page(curContext, &insert_item->tuple, kind,
+										 insert_item->level,
+										 curContext->items[curContext->index].blkno,
+										 curContext->items[curContext->index].pageChangeCount);
 				else
-					find_page(curContext, &insert_item->tuple, kind,
-							  insert_item->level);
+					result = find_page(curContext, &insert_item->tuple, kind,
+									   insert_item->level);
+				Assert(result == OFindPageResultSuccess);
 				insert_item->refind = false;
 			}
 
@@ -1006,7 +1009,7 @@ o_btree_insert_item(BTreeInsertStackItem *insert_item, int reserve_kind)
 							 insert_item->replace,
 							 csn);
 
-			split = merge_waited_tuples(desc, &newItems, &items,
+			split = merge_waited_tuples(desc, p, &newItems, &items,
 										tupleWaiterInfos,
 										tupleWaitersCount);
 

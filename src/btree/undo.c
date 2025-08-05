@@ -435,7 +435,7 @@ modify_undo_callback(UndoLogType undoType, UndoLocation location,
 	UndoLocation nonLockUndoLocation;
 	OBTreeFindPageContext context;
 	BTreeKeyType keyType = item->action == BTreeOperationUpdate ? BTreeKeyLeafTuple : BTreeKeyNonLeafKey;
-	bool		found;
+	OFindPageResult findResult;
 
 	Assert(abort);
 
@@ -463,10 +463,10 @@ modify_undo_callback(UndoLogType undoType, UndoLocation location,
 		item->pageChangeCount = InvalidOPageChangeCount;
 
 	o_set_syscache_hooks();
-	found = refind_page(&context, (Pointer) &tuple, keyType, 0, item->blkno,
-						item->pageChangeCount);
+	findResult = refind_page(&context, (Pointer) &tuple, keyType,
+							 0, item->blkno, item->pageChangeCount);
 	o_unset_syscache_hooks();
-	if (!found)
+	if (findResult == OFindPageResultFailure)
 	{
 		/*
 		 * BTree can be already deleted and cleaned by
@@ -474,6 +474,7 @@ modify_undo_callback(UndoLogType undoType, UndoLocation location,
 		 */
 		return;
 	}
+	Assert(findResult == OFindPageResultSuccess);
 
 	blkno = context.items[context.index].blkno;
 	p = O_GET_IN_MEMORY_PAGE(blkno);
@@ -555,6 +556,7 @@ lock_undo_callback(UndoLogType undoType, UndoLocation location,
 	OBTreeFindPageContext context;
 	UndoLocation tuphdrUndoLocation,
 				lastLockOnlyUndoLocation = InvalidUndoLocation;
+	OFindPageResult findResult;
 
 	Assert(abort);
 
@@ -577,7 +579,11 @@ lock_undo_callback(UndoLogType undoType, UndoLocation location,
 	if (!changeCountsValid)
 		item->pageChangeCount = InvalidOPageChangeCount;
 
-	if (!refind_page(&context, (Pointer) &key, BTreeKeyNonLeafKey, 0, item->blkno, item->pageChangeCount))
+	findResult = refind_page(&context, (Pointer) &key,
+							 BTreeKeyNonLeafKey, 0, item->blkno,
+							 item->pageChangeCount);
+
+	if (findResult == OFindPageResultFailure)
 	{
 		/*
 		 * BTree can be already deleted and cleaned by
@@ -585,6 +591,7 @@ lock_undo_callback(UndoLogType undoType, UndoLocation location,
 		 */
 		return;
 	}
+	Assert(findResult == OFindPageResultSuccess);
 
 	blkno = context.items[context.index].blkno;
 	p = O_GET_IN_MEMORY_PAGE(blkno);

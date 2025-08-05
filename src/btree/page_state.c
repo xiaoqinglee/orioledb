@@ -19,6 +19,7 @@
 #include "btree/page_chunks.h"
 #include "btree/undo.h"
 #include "recovery/recovery.h"
+#include "storage/itemptr.h"
 #include "tableam/descr.h"
 #include "tableam/key_range.h"
 #include "transam/oxid.h"
@@ -155,6 +156,7 @@ lock_page_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum)
 		else
 		{
 			Assert((state & PAGE_STATE_LIST_TAIL_MASK) != pgprocnum);
+			lockerState->blkno = OInvalidInMemoryBlkno;
 			lockerState->next = (state & PAGE_STATE_LIST_TAIL_MASK);
 			lockerState->waitExclusive = true;
 			lockerState->pageWaiting = true;
@@ -195,7 +197,9 @@ typedef enum
 static LockPageResult
 lock_page_or_queue_or_split_detect(BTreeDescr *desc, OInMemoryBlkno *blkno,
 								   uint32 *pageChangeCount, uint32 pgprocnum,
-								   PageImg *img, OTuple tuple, uint64 *prevState)
+								   PageImg *img, OTupleXactInfo xactInfo,
+								   OTuple tuple, uint64 *prevState,
+								   bool *keySerialized)
 {
 	UsageCountMap *ucm = &(get_ppool_by_blkno(*blkno)->ucm);
 	Page		p = O_GET_IN_MEMORY_PAGE(*blkno);
@@ -212,53 +216,87 @@ lock_page_or_queue_or_split_detect(BTreeDescr *desc, OInMemoryBlkno *blkno,
 	{
 		uint64		newState;
 
-		if (!img->load ||
-			(state & PAGE_STATE_CHANGE_COUNT_MASK) != (pg_atomic_read_u64(&imgHeader->state) & PAGE_STATE_CHANGE_COUNT_MASK))
-		{
-			if (!o_btree_read_page(desc, *blkno, *pageChangeCount, img->img,
-								   COMMITSEQNO_INPROGRESS, NULL, BTreeKeyNone, NULL,
-								   &img->partial, true, NULL, NULL))
-			{
-				return LockPageResultSplitDetected;
-			}
-
-			if (!O_PAGE_IS(img->img, RIGHTMOST))
-			{
-				OTuple		hikey;
-
-				BTREE_PAGE_GET_HIKEY(hikey, img->img);
-
-				if (o_btree_cmp(desc, &tuple, BTreeKeyLeafTuple,
-								&hikey, BTreeKeyNonLeafKey) >= 0)
-				{
-					uint64		rightlink = BTREE_PAGE_GET_RIGHTLINK(img->img);
-
-					if (OInMemoryBlknoIsValid(RIGHTLINK_GET_BLKNO(rightlink)))
-					{
-						lockerState->blkno = *blkno = RIGHTLINK_GET_BLKNO(rightlink);
-						lockerState->pageChangeCount = *pageChangeCount = RIGHTLINK_GET_CHANGECOUNT(rightlink);
-						p = O_GET_IN_MEMORY_PAGE(*blkno);
-						header = (OrioleDBPageHeader *) p;
-						Assert(get_my_locked_page_index(*blkno) < 0);
-						state = pg_atomic_read_u64(&header->state);
-						continue;
-					}
-					else
-					{
-						return LockPageResultSplitDetected;
-					}
-				}
-			}
-		}
-
-
 		if (!O_PAGE_STATE_IS_LOCKED(state))
 		{
 			newState = O_PAGE_STATE_LOCK(state);
 		}
 		else
 		{
+			if (!img->load ||
+				(state & PAGE_STATE_CHANGE_COUNT_MASK) != (pg_atomic_read_u64(&imgHeader->state) & PAGE_STATE_CHANGE_COUNT_MASK))
+			{
+				if (!o_btree_read_page(desc, *blkno, *pageChangeCount, img->img,
+									   COMMITSEQNO_INPROGRESS, NULL, BTreeKeyNone, NULL,
+									   &img->partial, true, NULL, NULL))
+				{
+					return LockPageResultSplitDetected;
+				}
+				img->load = true;
+
+				if (!O_PAGE_IS(img->img, RIGHTMOST))
+				{
+					OTuple		hikey;
+
+					BTREE_PAGE_GET_HIKEY(hikey, img->img);
+
+					if (o_btree_cmp(desc, &tuple, BTreeKeyLeafTuple,
+									&hikey, BTreeKeyNonLeafKey) >= 0)
+					{
+						uint64		rightlink = BTREE_PAGE_GET_RIGHTLINK(img->img);
+
+						if (OInMemoryBlknoIsValid(RIGHTLINK_GET_BLKNO(rightlink)))
+						{
+							*blkno = RIGHTLINK_GET_BLKNO(rightlink);
+							*pageChangeCount = RIGHTLINK_GET_CHANGECOUNT(rightlink);
+							p = O_GET_IN_MEMORY_PAGE(*blkno);
+							header = (OrioleDBPageHeader *) p;
+							Assert(get_my_locked_page_index(*blkno) < 0);
+							state = pg_atomic_read_u64(&header->state);
+							continue;
+						}
+						else
+						{
+							return LockPageResultSplitDetected;
+						}
+					}
+				}
+			}
+
+			if (!*keySerialized)
+			{
+				BTreeLeafTuphdr tuphdr;
+				int			tuplen;
+
+				tuphdr.deleted = false;
+				tuphdr.undoLocation = InvalidUndoLocation;
+				tuphdr.formatFlags = 0;
+				tuphdr.chainHasLocks = false;
+				tuphdr.xactInfo = xactInfo;
+
+				lockerState->reloids = desc->oids;
+				if (desc->undoType != UndoLogNone)
+					lockerState->reservedUndoSize = get_reserved_undo_size(desc->undoType);
+				else
+					lockerState->reservedUndoSize = 0;
+				lockerState->tupleFlags = tuple.formatFlags;
+				memcpy(lockerState->tupleData.fixedData,
+					   &tuphdr,
+					   BTreeLeafTuphdrSize);
+				tuplen = o_btree_len(desc, tuple, OTupleLength);
+				memcpy(&lockerState->tupleData.fixedData[BTreeLeafTuphdrSize],
+					   tuple.data,
+					   tuplen);
+				if (tuplen != MAXALIGN(tuplen))
+					memset(&lockerState->tupleData.fixedData[BTreeLeafTuphdrSize + tuplen],
+						   0, MAXALIGN(tuplen) - tuplen);
+				*keySerialized = true;
+			}
+
 			Assert((state & PAGE_STATE_LIST_TAIL_MASK) != pgprocnum);
+			lockerState->blkno = *blkno;
+			lockerState->pageChangeCount = *pageChangeCount;
+			lockerState->split = false;
+			Assert(!lockerState->inserted);
 			lockerState->next = (state & PAGE_STATE_LIST_TAIL_MASK);
 			lockerState->waitExclusive = true;
 			lockerState->pageWaiting = true;
@@ -311,6 +349,7 @@ read_enabled_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum)
 		else
 		{
 			Assert((state & PAGE_STATE_LIST_TAIL_MASK) != pgprocnum);
+			lockerState->blkno = OInvalidInMemoryBlkno;
 			lockerState->next = (state & PAGE_STATE_LIST_TAIL_MASK);
 			lockerState->waitExclusive = false;
 			lockerState->pageWaiting = true;
@@ -349,6 +388,7 @@ state_changed_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum,
 		else
 		{
 			Assert((state & PAGE_STATE_LIST_TAIL_MASK) != pgprocnum);
+			lockerState->blkno = OInvalidInMemoryBlkno;
 			lockerState->next = (state & PAGE_STATE_LIST_TAIL_MASK);
 			lockerState->waitExclusive = false;
 			lockerState->pageWaiting = true;
@@ -421,10 +461,10 @@ lock_page(OInMemoryBlkno blkno)
  * Place exclusive lock on the page.  Doesn't block readers before
  * page_block_reads() is called.
  */
-bool
+OLockPageWithTupleResult
 lock_page_with_tuple(BTreeDescr *desc,
 					 OInMemoryBlkno *blkno, uint32 *pageChangeCount,
-					 OTupleXactInfo xactInfo, OTuple tuple, bool *upwards)
+					 OTupleXactInfo xactInfo, OTuple tuple)
 {
 	uint64		prevState;
 	int			extraWaits = 0;
@@ -440,45 +480,12 @@ lock_page_with_tuple(BTreeDescr *desc,
 	{
 		LockPageResult lockResult;
 
-		lockerState->blkno = *blkno;
-		lockerState->pageChangeCount = *pageChangeCount;
-		lockerState->split = false;
-		lockerState->inserted = false;
-
-		if (!keySerialized)
-		{
-			BTreeLeafTuphdr tuphdr;
-			int			tuplen;
-
-			tuphdr.deleted = false;
-			tuphdr.undoLocation = InvalidUndoLocation;
-			tuphdr.formatFlags = 0;
-			tuphdr.chainHasLocks = false;
-			tuphdr.xactInfo = xactInfo;
-
-			lockerState->reloids = desc->oids;
-			if (desc->undoType != UndoLogNone)
-				lockerState->reservedUndoSize = get_reserved_undo_size(desc->undoType);
-			else
-				lockerState->reservedUndoSize = 0;
-			lockerState->tupleFlags = tuple.formatFlags;
-			memcpy(lockerState->tupleData.fixedData,
-				   &tuphdr,
-				   BTreeLeafTuphdrSize);
-			tuplen = o_btree_len(desc, tuple, OTupleLength);
-			memcpy(&lockerState->tupleData.fixedData[BTreeLeafTuphdrSize],
-				   tuple.data,
-				   tuplen);
-			if (tuplen != MAXALIGN(tuplen))
-				memset(&lockerState->tupleData.fixedData[BTreeLeafTuphdrSize + tuplen],
-					   0, MAXALIGN(tuplen) - tuplen);
-			keySerialized = true;
-		}
-
 		lockResult = lock_page_or_queue_or_split_detect(desc, blkno,
 														pageChangeCount,
 														MYPROCNUMBER,
-														&img, tuple, &prevState);
+														&img, xactInfo,
+														tuple, &prevState,
+														&keySerialized);
 
 		if (lockResult == LockPageResultLocked)
 		{
@@ -486,13 +493,10 @@ lock_page_with_tuple(BTreeDescr *desc,
 		}
 		else if (lockResult == LockPageResultSplitDetected)
 		{
-			*upwards = true;
-			return false;
+			lockerState->blkno = OInvalidInMemoryBlkno;
+			return OLockPageWithTupleResultRefindNeeded;
 		}
 		Assert(lockResult == LockPageResultQueued);
-
-		if (!O_PAGE_STATE_IS_LOCKED(prevState))
-			break;
 
 		pgstat_report_wait_start(PG_WAIT_LWLOCK | LWTRANCHE_BUFFER_CONTENT);
 
@@ -505,43 +509,30 @@ lock_page_with_tuple(BTreeDescr *desc,
 		}
 		pgstat_report_wait_end();
 
-		if (keySerialized && lockerState->inserted)
+		/*
+		 * Fix the process wait semaphore's count for any absorbed wakeups.
+		 */
+		while (extraWaits-- > 0)
+			PGSemaphoreUnlock(MyProc->sem);
+
+		if (lockerState->inserted)
 		{
+			Assert(keySerialized);
 			lockerState->blkno = OInvalidInMemoryBlkno;
 			lockerState->inserted = false;
 			if (desc->undoType != UndoLogNone)
 				giveup_reserved_undo_size(desc->undoType);
 
-			/*
-			 * Fix the process wait semaphore's count for any absorbed
-			 * wakeups.
-			 */
-			while (extraWaits-- > 0)
-				PGSemaphoreUnlock(MyProc->sem);
-			return false;
+			return OLockPageWithTupleResultInserted;
 		}
-
-		if (!lockerState->split)
-			continue;
-
-		while (extraWaits-- > 0)
-			PGSemaphoreUnlock(MyProc->sem);
 	}
-
-	if (keySerialized)
-		lockerState->blkno = OInvalidInMemoryBlkno;
+	lockerState->blkno = OInvalidInMemoryBlkno;
 
 	EA_LOCK_INC(*blkno);
 
 	my_locked_page_add(*blkno, prevState | PAGE_STATE_LOCKED_FLAG);
 
-	/*
-	 * Fix the process wait semaphore's count for any absorbed wakeups.
-	 */
-	while (extraWaits-- > 0)
-		PGSemaphoreUnlock(MyProc->sem);
-
-	return true;
+	return OLockPageWithTupleResultLocked;
 }
 
 void
@@ -1063,6 +1054,7 @@ unlock_page_internal(OInMemoryBlkno blkno, bool split)
 	}
 
 	my_locked_page_del(blkno);
+	pg_write_barrier();
 
 	pgprocnum = wakeupTail;
 	while (pgprocnum != PAGE_STATE_INVALID_PROCNO)

@@ -283,15 +283,18 @@ btree_try_merge_and_unlock(BTreeDescr *desc, OInMemoryBlkno blkno,
 
 		if (!page_is_locked(parent_blkno))
 		{
+			OFindPageResult result PG_USED_FOR_ASSERTS_ONLY;
+
 			/* refind parent page if needed */
 			if (!O_TUPLE_IS_NULL(key.tuple))
-				refind_page(&find_context, &key.tuple, BTreeKeyPageHiKey, level + 1,
-							parent_blkno,
-							parent_change_count);
+				result = refind_page(&find_context, &key.tuple,
+									 BTreeKeyPageHiKey, level + 1,
+									 parent_blkno, parent_change_count);
 			else
-				refind_page(&find_context, NULL, BTreeKeyRightmost, level + 1,
-							parent_blkno,
-							parent_change_count);
+				result = refind_page(&find_context, NULL, BTreeKeyRightmost,
+									 level + 1,
+									 parent_blkno, parent_change_count);
+			Assert(result == OFindPageResultSuccess);
 		}
 
 		/* Step 3: do all the checks with parent and target */

@@ -1594,6 +1594,7 @@ replay_erase_bridge_item(OIndexDescr *bridge, ItemPointer iptr)
 	OBTreeFindPageContext context;
 	OBTreeKeyBound bound;
 	OBtreePageFindItem *item;
+	OFindPageResult findResult PG_USED_FOR_ASSERTS_ONLY;
 	OTuple		tuple;
 	Page		p;
 
@@ -1609,7 +1610,8 @@ replay_erase_bridge_item(OIndexDescr *bridge, ItemPointer iptr)
 						   COMMITSEQNO_INPROGRESS,
 						   BTREE_PAGE_FIND_MODIFY);
 
-	(void) find_page(&context, &bound, BTreeKeyBound, 0);
+	findResult = find_page(&context, &bound, BTreeKeyBound, 0);
+	Assert(findResult == OFindPageResultSuccess);
 
 	item = &context.items[context.index];
 	p = O_GET_IN_MEMORY_PAGE(item->blkno);
