@@ -28,7 +28,6 @@ static bool skip_ucm = false;
 static int	init_ucm_non_leaf_recursive(UsageCountMap *map, int i);
 static void ucm_inc_recursive(UsageCountMap *map, int i, int prev, int next);
 static bool ucm_check_recursive(UsageCountMap *map, int i);
-static inline void ucm_inc(UsageCountMap *map, OInMemoryBlkno blkno, int prev, int next);
 
 /*
  * Estimate shaed memory space for UCM data structure.
@@ -211,7 +210,7 @@ ucm_inc_recursive(UsageCountMap *map, int i, int32 prev, int32 next)
 						  ((val & next_mask) == 0) ? next : UCM_INVALID_LEVEL);
 }
 
-static inline void
+void
 ucm_inc(UsageCountMap *map, OInMemoryBlkno blkno, int prev, int next)
 {
 	ucm_inc_recursive(map, map->nonLeaf + blkno / UCM_BRANCH_FACTOR, prev, next);
@@ -245,7 +244,7 @@ page_inc_usage_count_internal(UsageCountMap *map, OInMemoryBlkno blkno,
 }
 
 void
-page_inc_usage_count(UsageCountMap *map, OInMemoryBlkno blkno, bool no_skip)
+page_inc_usage_count(UsageCountMap *map, OInMemoryBlkno blkno)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
 	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
@@ -254,7 +253,7 @@ page_inc_usage_count(UsageCountMap *map, OInMemoryBlkno blkno, bool no_skip)
 
 	if (usageCount == UCM_INVALID_LEVEL ||
 		usageCount == UCM_FREE_PAGES_LEVEL ||
-		(!no_skip && skip_ucm))
+		skip_ucm)
 		return;
 
 	page_inc_usage_count_internal(map, blkno, state);

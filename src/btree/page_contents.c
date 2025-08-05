@@ -136,7 +136,7 @@ try_copy_page(OInMemoryBlkno blkno, uint32 pageChangeCount, Page dest,
 	Assert(hiKeysEndOK);
 
 	ucm = &(get_ppool_by_blkno(blkno)->ucm);
-	page_inc_usage_count(ucm, blkno, false);
+	page_inc_usage_count(ucm, blkno);
 
 	return ReadPageResultOK;
 }

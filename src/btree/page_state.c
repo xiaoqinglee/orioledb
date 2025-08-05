@@ -134,10 +134,12 @@ my_locked_page_get_state(OInMemoryBlkno blkno)
 static uint64
 lock_page_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum)
 {
+	UsageCountMap *ucm = &(get_ppool_by_blkno(blkno)->ucm);
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
 	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
 	uint64		state;
 	LockerShmemState *lockerState = &lockerStates[pgprocnum];
+	bool		ucmUpdateTried = false;
 
 	Assert(pgprocnum < max_procs);
 
@@ -160,8 +162,17 @@ lock_page_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum)
 			newState |= pgprocnum;
 		}
 
+		if (!ucmUpdateTried)
+		{
+			newState = ucm_update_state(ucm, blkno, newState);
+			ucmUpdateTried = true;
+		}
+
 		if (pg_atomic_compare_exchange_u64(&header->state, &state, newState))
+		{
+			ucm_after_update_state(ucm, blkno, state, newState);
 			break;
+		}
 	}
 
 	return state;
@@ -186,11 +197,13 @@ lock_page_or_queue_or_split_detect(BTreeDescr *desc, OInMemoryBlkno *blkno,
 								   uint32 *pageChangeCount, uint32 pgprocnum,
 								   PageImg *img, OTuple tuple, uint64 *prevState)
 {
+	UsageCountMap *ucm = &(get_ppool_by_blkno(*blkno)->ucm);
 	Page		p = O_GET_IN_MEMORY_PAGE(*blkno);
 	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
 	OrioleDBPageHeader *imgHeader = (OrioleDBPageHeader *) img->img;
 	uint64		state;
 	LockerShmemState *lockerState = &lockerStates[pgprocnum];
+	bool		ucmUpdateTried = false;
 
 	Assert(pgprocnum < max_procs);
 
@@ -253,8 +266,17 @@ lock_page_or_queue_or_split_detect(BTreeDescr *desc, OInMemoryBlkno *blkno,
 			newState |= pgprocnum;
 		}
 
+		if (!ucmUpdateTried)
+		{
+			newState = ucm_update_state(ucm, *blkno, newState);
+			ucmUpdateTried = true;
+		}
+
 		if (pg_atomic_compare_exchange_u64(&header->state, &state, newState))
+		{
+			ucm_after_update_state(ucm, *blkno, state, newState);
 			break;
+		}
 	}
 
 	*prevState = state;
@@ -307,10 +329,12 @@ static uint64
 state_changed_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum,
 					   uint64 oldState)
 {
+	UsageCountMap *ucm = &(get_ppool_by_blkno(blkno)->ucm);
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
 	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
 	uint64		state;
 	LockerShmemState *lockerState = &lockerStates[pgprocnum];
+	bool		ucmUpdateTried = false;
 
 	state = pg_atomic_read_u64(&header->state);
 	while (true)
@@ -332,8 +356,17 @@ state_changed_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum,
 			newState |= pgprocnum;
 		}
 
+		if (!ucmUpdateTried)
+		{
+			newState = ucm_update_state(ucm, blkno, newState);
+			ucmUpdateTried = true;
+		}
+
 		if (pg_atomic_compare_exchange_u64(&header->state, &state, newState))
+		{
+			ucm_after_update_state(ucm, blkno, state, newState);
 			break;
+		}
 	}
 
 	return state;
@@ -347,7 +380,6 @@ state_changed_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum,
 void
 lock_page(OInMemoryBlkno blkno)
 {
-	UsageCountMap *ucm = &(get_ppool_by_blkno(blkno)->ucm);
 	LockerShmemState *lockerState = &lockerStates[MYPROCNUMBER];
 	uint64		prevState;
 	int			extraWaits = 0;
@@ -355,8 +387,6 @@ lock_page(OInMemoryBlkno blkno)
 	Assert(get_my_locked_page_index(blkno) < 0);
 
 	EA_LOCK_INC(blkno);
-
-	page_inc_usage_count(ucm, blkno, false);
 
 	while (true)
 	{
@@ -396,7 +426,6 @@ lock_page_with_tuple(BTreeDescr *desc,
 					 OInMemoryBlkno *blkno, uint32 *pageChangeCount,
 					 OTupleXactInfo xactInfo, OTuple tuple, bool *upwards)
 {
-	UsageCountMap *ucm;
 	uint64		prevState;
 	int			extraWaits = 0;
 	LockerShmemState *lockerState = &lockerStates[MYPROCNUMBER];
@@ -503,8 +532,6 @@ lock_page_with_tuple(BTreeDescr *desc,
 		lockerState->blkno = OInvalidInMemoryBlkno;
 
 	EA_LOCK_INC(*blkno);
-	ucm = &(get_ppool_by_blkno(*blkno)->ucm);
-	page_inc_usage_count(ucm, *blkno, false);
 
 	my_locked_page_add(*blkno, prevState | PAGE_STATE_LOCKED_FLAG);
 
@@ -613,15 +640,12 @@ have_locked_pages(void)
 void
 relock_page(OInMemoryBlkno blkno)
 {
-	UsageCountMap *ucm = &(get_ppool_by_blkno(blkno)->ucm);
 	uint64		state;
 
 	state = my_locked_page_get_state(blkno);
 	unlock_page(blkno);
 
 	STOPEVENT(STOPEVENT_RELOCK_PAGE, NULL);
-
-	page_inc_usage_count(ucm, blkno, false);
 
 	page_wait_for_changecount(blkno, state);
 	lock_page(blkno);
@@ -633,6 +657,7 @@ relock_page(OInMemoryBlkno blkno)
 bool
 try_lock_page(OInMemoryBlkno blkno)
 {
+	UsageCountMap *ucm = &(get_ppool_by_blkno(blkno)->ucm);
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
 	uint64		state;
 
@@ -644,6 +669,8 @@ try_lock_page(OInMemoryBlkno blkno)
 
 	EA_LOCK_INC(blkno);
 	my_locked_page_add(blkno, state | PAGE_STATE_LOCKED_FLAG);
+	page_inc_usage_count(ucm, blkno);
+
 	return true;
 }
 
