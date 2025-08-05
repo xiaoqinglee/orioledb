@@ -853,7 +853,7 @@ o_btree_insert_item(BTreeInsertStackItem *insert_item, int reserve_kind)
 
 	while (insert_item != NULL)
 	{
-		BTreeItemPageFitType fit;
+		BTreeItemPageFitType fit = BTreeItemPageFitAsIs;
 		LocationIndex newItemSize;
 		LocationIndex tupheaderlen;
 		OBTreeFindPageContext *curContext = insert_item->context;
