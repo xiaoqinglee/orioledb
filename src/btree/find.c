@@ -641,32 +641,6 @@ find_page(OBTreeFindPageContext *context, void *key, BTreeKeyType keyType,
 			continue;
 		}
 
-		/*
-		 * Fix broken rootPageBlkno split if needed.
-		 */
-		if (context->index == 0 &&
-			O_PAGE_IS(intCxt.pagePtr, BROKEN_SPLIT) &&
-			!noFixFlag)
-		{
-			Page		rootPageBlkno;
-
-			Assert(intCxt.blkno == desc->rootInfo.rootPageBlkno);
-
-			if (!intCxt.haveLock)
-			{
-				lock_page(desc->rootInfo.rootPageBlkno);
-				intCxt.haveLock = true;
-			}
-
-			rootPageBlkno = O_GET_IN_MEMORY_PAGE(desc->rootInfo.rootPageBlkno);
-			if (O_PAGE_IS(rootPageBlkno, BROKEN_SPLIT))
-			{
-				o_btree_split_fix_and_unlock(desc, desc->rootInfo.rootPageBlkno);
-				intCxt.haveLock = false;
-				continue;
-			}
-		}
-
 		if (level > targetLevel || downlinkLocationFlag)
 		{
 			OBTreeFastPathFindResult result;
@@ -746,9 +720,9 @@ find_page(OBTreeFindPageContext *context, void *key, BTreeKeyType keyType,
 					Assert(!noFixFlag);
 					Assert(modifyFlag);
 
-					if (o_btree_split_is_incomplete(intCxt.blkno, &relocked))
+					if (O_PAGE_IS(p, BROKEN_SPLIT))
 					{
-						o_btree_split_fix_and_unlock(desc, intCxt.blkno);
+						o_btree_split_fix_for_right_page_and_unlock(desc, intCxt.blkno);
 						intCxt.haveLock = false;
 						step_upward_level(&intCxt);
 						continue;
@@ -1037,8 +1011,7 @@ retry:
 		intCxt.haveLock = true;
 		intCxt.pagePtr = p;
 		if (PAGE_GET_LEVEL(p) != level ||
-			O_PAGE_GET_CHANGE_COUNT(p) != intCxt.pageChangeCount ||
-			(O_PAGE_IS(p, BROKEN_SPLIT) && intCxt.blkno == desc->rootInfo.rootPageBlkno))
+			O_PAGE_GET_CHANGE_COUNT(p) != intCxt.pageChangeCount)
 		{
 			unlock_page(intCxt.blkno);
 			return find_page(context, key, keyType, level);
@@ -1048,20 +1021,14 @@ retry:
 		{
 			/* called from o_btree_normal_modify() */
 			/* try to fix incomplete split for leafs here */
-			bool		relocked = false;
 
 			Assert(!BTREE_PAGE_FIND_IS(context, NO_FIX_SPLIT));
 
-			if (o_btree_split_is_incomplete(intCxt.blkno, &relocked))
+			if (O_PAGE_IS(p, BROKEN_SPLIT))
 			{
+				o_btree_split_fix_for_right_page_and_unlock(desc, intCxt.blkno);
 				intCxt.haveLock = false;
 				o_btree_split_fix_and_unlock(desc, intCxt.blkno);
-				goto retry;
-			}
-			else if (relocked)
-			{
-				intCxt.haveLock = false;
-				unlock_page(intCxt.blkno);
 				goto retry;
 			}
 		}
@@ -1089,8 +1056,7 @@ retry:
 		intCxt.haveLock = false;
 		intCxt.pagePtr = img;
 		if (!success ||
-			PAGE_GET_LEVEL(img) != level ||
-			(O_PAGE_IS(img, BROKEN_SPLIT) && intCxt.blkno == desc->rootInfo.rootPageBlkno))
+			PAGE_GET_LEVEL(img) != level)
 		{
 			return find_page(context, key, keyType, level);
 		}

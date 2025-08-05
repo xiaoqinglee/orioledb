@@ -1185,15 +1185,22 @@ btree_split_mark_finished(OInMemoryBlkno rightBlkno, bool use_lock, bool success
 	leftBlkno = rightPageDesc->leftBlkno;
 	Assert(OInMemoryBlknoIsValid(leftBlkno));
 
-	if (use_lock && success)
+	/*
+	 * Still need to lock th left page even if we're going to just set
+	 * BROKEN_SPLIT on the right page, because we need to notify waiters
+	 * in o_btree_split_is_incomplete().
+	 */
+	if (use_lock)
 	{
 		while (true)
 		{
 			lock_page(leftBlkno);
-			page_block_reads(leftBlkno);
 
 			if (rightPageDesc->leftBlkno == leftBlkno)
+			{
+				page_block_reads(leftBlkno);
 				break;
+			}
 
 			unlock_page(leftBlkno);
 			leftBlkno = rightPageDesc->leftBlkno;
@@ -1228,7 +1235,7 @@ btree_split_mark_finished(OInMemoryBlkno rightBlkno, bool use_lock, bool success
 
 	unlock_page(rightBlkno);
 
-	if (use_lock && success)
+	if (use_lock)
 		unlock_page(leftBlkno);
 }
 

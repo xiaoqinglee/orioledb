@@ -3125,7 +3125,9 @@ checkpoint_fix_split_and_lock_page(BTreeDescr *descr, CheckpointState *state,
 
 		Assert(level >= 0 && level < ORIOLEDB_MAX_DEPTH);
 
-		if (o_btree_split_is_incomplete(*blkno, &relocked))
+		if (o_btree_split_is_incomplete(*blkno,
+										page_chage_count,
+										&relocked))
 		{
 			o_btree_split_fix_and_unlock(descr, *blkno);
 			checkpoint_reserve_undo(descr->undoType, false);

@@ -84,7 +84,8 @@ static void o_btree_insert_item(BTreeInsertStackItem *insert_item,
  * Should be always call before insert a new tuple to page.
  */
 bool
-o_btree_split_is_incomplete(OInMemoryBlkno left_blkno, bool *relocked)
+o_btree_split_is_incomplete(OInMemoryBlkno left_blkno, uint32 pageChangeCount,
+							bool *relocked)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(left_blkno);
 	BTreePageHeader *header = (BTreePageHeader *) p;
@@ -104,6 +105,9 @@ o_btree_split_is_incomplete(OInMemoryBlkno left_blkno, bool *relocked)
 		{
 			relock_page(left_blkno);
 			*relocked = true;
+			if (O_PAGE_GET_CHANGE_COUNT(p) != pageChangeCount)
+				return false;
+
 			rightLink = header->rightLink;
 			if (RightLinkIsValid(rightLink))
 			{
@@ -335,6 +339,40 @@ o_btree_split_fix_and_unlock(BTreeDescr *descr, OInMemoryBlkno left_blkno)
 	{
 		MemoryContextSwitchTo(prev_context);
 		MemoryContextResetOnly(btree_insert_context);
+	}
+}
+
+/*
+ * Fixes incomplete split of a page.
+ * Left page must be locked. Unlocks left page and all pages used internally.
+ */
+void
+o_btree_split_fix_for_right_page_and_unlock(BTreeDescr *desc, OInMemoryBlkno rightBlkno)
+{
+	OrioleDBPageDesc *rightPageDesc = O_GET_IN_MEMORY_PAGEDESC(rightBlkno);
+	OInMemoryBlkno	leftBlkno;
+	BTreePageHeader *leftHeader;
+	uint64		rightLink;
+	uint32		rightChangeCount;
+
+	leftBlkno = rightPageDesc->leftBlkno;
+	rightChangeCount = O_PAGE_GET_CHANGE_COUNT(O_GET_IN_MEMORY_PAGE(rightBlkno));
+
+	unlock_page(rightBlkno);
+
+	lock_page(leftBlkno);
+	leftHeader = (BTreePageHeader *) O_GET_IN_MEMORY_PAGE(leftBlkno);
+	rightLink = leftHeader->rightLink;
+
+	if (RightLinkIsValid(rightLink) &&
+		RIGHTLINK_GET_BLKNO(rightLink) == rightBlkno &&
+		RIGHTLINK_GET_CHANGECOUNT(rightLink) == rightChangeCount)
+	{
+		o_btree_split_fix_and_unlock(desc, leftBlkno);
+	}
+	else
+	{
+		unlock_page(leftBlkno);
 	}
 }
 
@@ -852,6 +890,7 @@ o_btree_insert_item(BTreeInsertStackItem *insert_item, int reserve_kind)
 		else
 		{
 			bool		relocked = false;
+			uint32		pageChangeCount;
 
 			if (insert_item->refind)
 			{
@@ -875,8 +914,11 @@ o_btree_insert_item(BTreeInsertStackItem *insert_item, int reserve_kind)
 
 			Assert(curContext->index >= 0 && curContext->index < ORIOLEDB_MAX_DEPTH);
 			blkno = curContext->items[curContext->index].blkno;
+			pageChangeCount = curContext->items[curContext->index].pageChangeCount;
 
-			if (o_btree_split_is_incomplete(blkno, &relocked))
+			if (o_btree_split_is_incomplete(blkno,
+											pageChangeCount,
+											&relocked))
 			{
 				/* pushes fix split item to the insert context */
 				insert_item = o_btree_insert_stack_push_split_item(insert_item,
