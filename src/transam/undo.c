@@ -1286,7 +1286,7 @@ add_new_undo_stack_item_to_process(UndoLogType undoType,
 {
 	UndoStackItem *item = (UndoStackItem *) GET_UNDO_REC(undoType, location);
 	UndoStackSharedLocations *sharedLocations;
-	UndoItemTypeDescr *descr = item_type_get_descr(item->type);
+	UndoItemTypeDescr *descr PG_USED_FOR_ASSERTS_ONLY = item_type_get_descr(item->type);
 
 	Assert(!descr->callOnCommit);
 
