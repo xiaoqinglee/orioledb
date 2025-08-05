@@ -211,7 +211,7 @@ lock_page_or_queue_or_split_detect(BTreeDescr *desc, OInMemoryBlkno *blkno,
 
 			if (!O_PAGE_IS(img->img, RIGHTMOST))
 			{
-				OTuple	hikey;
+				OTuple		hikey;
 
 				BTREE_PAGE_GET_HIKEY(hikey, img->img);
 
@@ -305,7 +305,7 @@ read_enabled_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum)
 
 static uint64
 state_changed_or_queue(OInMemoryBlkno blkno, uint32 pgprocnum,
-					  uint64 oldState)
+					   uint64 oldState)
 {
 	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
 	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
@@ -485,8 +485,8 @@ lock_page_with_tuple(BTreeDescr *desc,
 
 			/*
 			 * Fix the process wait semaphore's count for any absorbed
-				* wakeups.
-				*/
+			 * wakeups.
+			 */
 			while (extraWaits-- > 0)
 				PGSemaphoreUnlock(MyProc->sem);
 			return false;
@@ -964,7 +964,7 @@ unlock_page_internal(OInMemoryBlkno blkno, bool split)
 				!lockerState->waitExclusive ||
 				(split && BlockNumberIsValid(lockerState->blkno)))
 			{
-				uint32	next = lockerState->next;
+				uint32		next = lockerState->next;
 
 				if (!lockerState->inserted && split && BlockNumberIsValid(lockerState->blkno))
 					lockerState->split = true;
@@ -1053,7 +1053,7 @@ unlock_page_internal(OInMemoryBlkno blkno, bool split)
 
 	my_locked_page_del(blkno);
 
-//	elog(LOG, "unlock %u %d %d %d %d", blkno, count1, count2, count3, count4);
+/* 	elog(LOG, "unlock %u %d %d %d %d", blkno, count1, count2, count3, count4); */
 
 	pgprocnum = wakeupTail;
 	while (pgprocnum != PAGE_STATE_INVALID_PROCNO)
@@ -1180,15 +1180,15 @@ btree_split_mark_finished(OInMemoryBlkno rightBlkno, bool use_lock, bool success
 	BTreePageHeader *leftHeader;
 	BTreePageHeader *rightHeader;
 	OrioleDBPageDesc *rightPageDesc = O_GET_IN_MEMORY_PAGEDESC(rightBlkno);
-	OInMemoryBlkno	leftBlkno;
+	OInMemoryBlkno leftBlkno;
 
 	leftBlkno = rightPageDesc->leftBlkno;
 	Assert(OInMemoryBlknoIsValid(leftBlkno));
 
 	/*
 	 * Still need to lock th left page even if we're going to just set
-	 * BROKEN_SPLIT on the right page, because we need to notify waiters
-	 * in o_btree_split_is_incomplete().
+	 * BROKEN_SPLIT on the right page, because we need to notify waiters in
+	 * o_btree_split_is_incomplete().
 	 */
 	if (use_lock)
 	{

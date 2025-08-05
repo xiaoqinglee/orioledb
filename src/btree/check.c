@@ -539,7 +539,7 @@ check_walk_btree(BTreeCheckStatus *status, OInMemoryBlkno blkno,
 	rightLink = header->rightLink;
 	if (RightLinkIsValid(rightLink))
 	{
-		Page	rightP = O_GET_IN_MEMORY_PAGE(RIGHTLINK_GET_BLKNO(rightLink));
+		Page		rightP = O_GET_IN_MEMORY_PAGE(RIGHTLINK_GET_BLKNO(rightLink));
 
 		if (O_PAGE_IS(rightP, BROKEN_SPLIT))
 		{

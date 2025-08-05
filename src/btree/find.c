@@ -988,7 +988,7 @@ retry:
 
 		if (!O_TUPLE_IS_NULL(context->insertTuple))
 		{
-			bool	upwards = false;
+			bool		upwards = false;
 
 			if (!lock_page_with_tuple(desc,
 									  &intCxt.blkno,

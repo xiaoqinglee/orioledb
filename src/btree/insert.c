@@ -93,7 +93,7 @@ o_btree_split_is_incomplete(OInMemoryBlkno left_blkno, uint32 pageChangeCount,
 
 	if (RightLinkIsValid(rightLink))
 	{
-		Page	rightP = O_GET_IN_MEMORY_PAGE(RIGHTLINK_GET_BLKNO(rightLink));
+		Page		rightP = O_GET_IN_MEMORY_PAGE(RIGHTLINK_GET_BLKNO(rightLink));
 
 		Assert(O_PAGE_GET_CHANGE_COUNT(rightP) == RIGHTLINK_GET_CHANGECOUNT(rightLink));
 
@@ -287,6 +287,7 @@ o_btree_fix_page_split(BTreeDescr *desc, OInMemoryBlkno left_blkno)
 	START_CRIT_SECTION();
 	page_block_reads(rightBlkno);
 	rightHeader->flags &= ~O_BTREE_FLAG_BROKEN_SPLIT;
+
 	/*
 	 * Register split.  That would put back O_BTREE_FLAG_BROKEN_SPLIT on
 	 * error.
@@ -350,7 +351,7 @@ void
 o_btree_split_fix_for_right_page_and_unlock(BTreeDescr *desc, OInMemoryBlkno rightBlkno)
 {
 	OrioleDBPageDesc *rightPageDesc = O_GET_IN_MEMORY_PAGEDESC(rightBlkno);
-	OInMemoryBlkno	leftBlkno;
+	OInMemoryBlkno leftBlkno;
 	BTreePageHeader *leftHeader;
 	uint64		rightLink;
 	uint32		rightChangeCount;
@@ -384,7 +385,7 @@ o_btree_insert_stack_push_split_item(BTreeInsertStackItem *insert_item,
 	BTreePageHeader *header = (BTreePageHeader *) p;
 	BTreePageHeader *rightHeader;
 	BTreeInsertStackItem *new_item = palloc(sizeof(BTreeInsertStackItem));
-	OInMemoryBlkno	right_blkno;
+	OInMemoryBlkno right_blkno;
 
 	/* Should not be here. */
 	Assert(insert_item->context->index != 0);
@@ -707,8 +708,8 @@ o_btree_insert_split(BTreeInsertStackItem *insert_item,
 	right_blkno = ppool_get_page(desc->ppool, reserve_kind);
 
 	/*
-	 * Move hikeyBlkno of split.  This change is atomic, no need to
-	 * bother about change count.
+	 * Move hikeyBlkno of split.  This change is atomic, no need to bother
+	 * about change count.
 	 */
 	if (checkpoint_state->stack[insert_item->level].hikeyBlkno == blkno)
 		checkpoint_state->stack[insert_item->level].hikeyBlkno = right_blkno;
