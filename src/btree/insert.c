@@ -1193,6 +1193,9 @@ o_btree_insert_item(BTreeInsertStackItem *insert_item, int reserve_kind)
 				ptr += tupheaderlen;
 				memcpy(ptr, insert_item->tuple.data, insert_item->tuplen);
 				BTREE_PAGE_SET_ITEM_FLAGS(p, &loc, insert_item->tuple.formatFlags);
+
+				if (!(insert_item->tuple.formatFlags & O_TUPLE_FLAGS_FIXED_FORMAT))
+					header->chunkDesc[loc.chunkOffset].chunkKeysFixed = 0;
 			}
 
 			if (fit != BTreeItemPageFitCompactRequired)
