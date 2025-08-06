@@ -1269,7 +1269,6 @@ retry:
 			else
 			{
 				OBTreeWaitCallbackAction cbAction;
-				OFindPageResult findResult PG_USED_FOR_ASSERTS_ONLY;
 
 				LWLockRelease(uniqueLock);
 				if (callbackInfo->waitCallback)
@@ -1349,7 +1348,6 @@ retry:
 			else
 			{
 				OBTreeWaitCallbackAction cbAction;
-				OFindPageResult findResult PG_USED_FOR_ASSERTS_ONLY;
 
 				LWLockRelease(uniqueLock);
 
@@ -1374,8 +1372,6 @@ retry:
 		}
 		else
 		{
-			OFindPageResult findResult PG_USED_FOR_ASSERTS_ONLY;
-
 			BTREE_PAGE_FIND_SET(&pageFindContext, MODIFY);
 			findResult = find_page(&pageFindContext, key, BTreeKeyBound, 0);
 			Assert(findResult == OFindPageResultSuccess);
