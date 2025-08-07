@@ -936,141 +936,199 @@ unlock_check_page(OInMemoryBlkno blkno)
 }
 
 /*
- * Unlock the page.  Page should be locked before.
+ * unlock_page_internal -- release a previously locked in‑memory page and wake
+ *						   any backends that can now proceed.
+ *
+ * The waiters are stored in a lock‑less, singly‑linked list.  The tail
+ * (newest waiter) PGPROC number is packed into the low bits of the 64-bit
+ * page‑state word.  A successful unlock therefore needs to:
+ *	 1. Walk that list;
+ *	 2. Move every suitable waiter (see `shouldWake`) and at most one
+ *		exclusive waiter to a private wake list;
+ *	 3. Patch the shared list so that the removed waiters vanish from it;
+ *	 4. Publish a new page‑state word with the updated tail via atomic CAS;
+ *	 5. If the CAS fails, process the newly added waiters (if any) and retry;
+ *	 6. Finally, wake up all backends we collected on our private list.
+ *
+ * The two auxiliary variables `prevTail` and `prevTailPatch` are the key to
+ * the logic: if we fail the CAS, the list may already contain our previous
+ * patch (i.e. `prevTail->next` now points somewhere else).  We detect that
+ * and re‑apply the patch in the next iteration instead of trying to start
+ * from scratch (the latter is not possible, because we might already have
+ * modified the list).
  */
 static void
 unlock_page_internal(OInMemoryBlkno blkno, bool split)
 {
-	Page		p = O_GET_IN_MEMORY_PAGE(blkno);
-	OrioleDBPageHeader *header = (OrioleDBPageHeader *) p;
+	Page		page = O_GET_IN_MEMORY_PAGE(blkno);
+	OrioleDBPageHeader *hdr = (OrioleDBPageHeader *) page;
+
+	/* Head of our private stack of waiters to wake once the page is unlocked */
+	uint32		wakeListHead = PAGE_STATE_INVALID_PROCNO;
+
+	/* Bookkeeping needed when the CAS fails and we must retry */
+	uint32		prevTail = PAGE_STATE_INVALID_PROCNO;
+	uint32		prevTailPatch = PAGE_STATE_INVALID_PROCNO;
+
+	/* We may wake **one** exclusive waiter per unlock attempt */
+	bool		exclusiveAlreadyWoken = false;
 	uint64		state;
-	uint32		pgprocnum,
-				prevPgprocnum,
-				newTail,
-				tail,
-				wakeupTail = PAGE_STATE_INVALID_PROCNO,
-				prevTail = PAGE_STATE_INVALID_PROCNO,
-				prevTailReplace = PAGE_STATE_INVALID_PROCNO,
-				exclusive = PAGE_STATE_INVALID_PROCNO,
-				exclusivePrev = PAGE_STATE_INVALID_PROCNO;
-	bool		wokeup_exclusive = false;
 
 	unlock_check_page(blkno);
 
-	state = pg_atomic_read_u64(&header->state);
-	while (true)
+	state = pg_atomic_read_u64(&hdr->state);
+
+	for (;;)
 	{
+		/* Snapshot the tail encoded in the state word */
+		uint32		tail = state & PAGE_STATE_LIST_TAIL_MASK;
+		uint32		cur = tail;
+		uint32		prev = PAGE_STATE_INVALID_PROCNO;
 		uint64		newState;
 
-		newTail = tail = pgprocnum = state & PAGE_STATE_LIST_TAIL_MASK;
+		uint32		newTail = tail; /* will become the new list tail */
 
-		prevPgprocnum = PAGE_STATE_INVALID_PROCNO;
-		while (pgprocnum != prevTail)
+		/* Remember the first exclusive waiter we may decide to wake */
+		uint32		exclusive = PAGE_STATE_INVALID_PROCNO;
+		uint32		exclusivePrev = PAGE_STATE_INVALID_PROCNO;
+
+		/* --------------------------------------------------------------
+		 * 1. Walk the waiter list, unlinking suitable lockers on the fly
+		 * --------------------------------------------------------------*/
+		while (cur != prevTail) /* stop before the node we patched during the
+								 * previous (failed) iteration */
 		{
-			LockerShmemState *lockerState = &lockerStates[pgprocnum];
+			LockerShmemState *lock = &lockerStates[cur];
 
-			if (lockerState->inserted ||
-				!lockerState->waitExclusive ||
-				(split && BlockNumberIsValid(lockerState->blkno)))
+			bool		shouldWake =
+				lock->inserted ||
+				!lock->waitExclusive ||
+				(split && BlockNumberIsValid(lock->blkno));
+
+			if (shouldWake)
 			{
-				uint32		next = lockerState->next;
+				uint32		next = lock->next;
 
-				if (!lockerState->inserted && split && BlockNumberIsValid(lockerState->blkno))
-					lockerState->split = true;
+				/* Mark that the locker must repeat the operation after split */
+				if (!lock->inserted && split && BlockNumberIsValid(lock->blkno))
+					lock->split = true;
 
-				/* Remove from the waiters list */
-				if (prevPgprocnum == PAGE_STATE_INVALID_PROCNO)
-					newTail = next;
+				/* Unlink waiter from shared waiter list */
+				if (prev == PAGE_STATE_INVALID_PROCNO)
+					newTail = next; /* removed the first element */
 				else
-					lockerStates[prevPgprocnum].next = next;
+					lockerStates[prev].next = next;
 
-				/* Push to the wakeup list */
-				Assert(pgprocnum != wakeupTail);
-				lockerState->next = wakeupTail;
-				wakeupTail = pgprocnum;
+				/* Push waiter onto our private wake list */
+				lock->next = wakeListHead;
+				wakeListHead = cur;
 
-				pgprocnum = next;
+				cur = next;
+				continue;		/* stay on the same `prev` */
 			}
-			else
+
+			/* Remember the first (oldest) exclusive waiter */
+			if (!exclusiveAlreadyWoken && exclusive == PAGE_STATE_INVALID_PROCNO)
 			{
-				if (!wokeup_exclusive)
-				{
-					exclusive = pgprocnum;
-					exclusivePrev = prevPgprocnum;
-				}
-
-				prevPgprocnum = pgprocnum;
-				pgprocnum = lockerState->next;
+				exclusive = cur;
+				exclusivePrev = prev;
 			}
+
+			prev = cur;
+			cur = lock->next;
 		}
 
-		if (exclusive != PAGE_STATE_INVALID_PROCNO && !wokeup_exclusive)
+		/* ----------------------------------------------------------------
+		 * 2. Optionally move the first exclusive waiter to the wake list
+		 * ----------------------------------------------------------------*/
+		if (exclusive != PAGE_STATE_INVALID_PROCNO && !exclusiveAlreadyWoken)
 		{
-			wokeup_exclusive = true;
+			LockerShmemState *lock = &lockerStates[exclusive];
+
+			exclusiveAlreadyWoken = true;
 
 			if (exclusivePrev == PAGE_STATE_INVALID_PROCNO)
-				newTail = lockerStates[exclusive].next;
+				newTail = lock->next;	/* exclusive was the first node */
 			else
-			{
-				Assert(exclusivePrev != lockerStates[exclusive].next);
-				lockerStates[exclusivePrev].next = lockerStates[exclusive].next;
-			}
+				lockerStates[exclusivePrev].next = lock->next;
 
-			/* Push to the wakeup list */
-			Assert(exclusive != wakeupTail);
-			lockerStates[exclusive].next = wakeupTail;
-			wakeupTail = exclusive;
+			/* push to wake list */
+			lock->next = wakeListHead;
+			wakeListHead = exclusive;
 
-			if (prevPgprocnum == exclusive)
-				prevPgprocnum = exclusivePrev;
+			if (prev == exclusive)
+				prev = exclusivePrev;
 		}
 
-		/*
-		 * Redo the previous replacement of tail if needed.
-		 */
-		if (prevTail != prevTailReplace)
+		/* ----------------------------------------------------------------
+		 * 3. Re‑apply the patch from the previous failed CAS attempt
+		 * ----------------------------------------------------------------*/
+		if (prevTail != prevTailPatch)
 		{
 			Assert(prevTail != PAGE_STATE_INVALID_PROCNO);
 
-			if (prevPgprocnum == PAGE_STATE_INVALID_PROCNO)
-				newTail = prevTailReplace;
+			if (prev == PAGE_STATE_INVALID_PROCNO)
+				newTail = prevTailPatch;	/* new head is different */
 			else
 			{
-				Assert(prevPgprocnum != prevTailReplace);
-				lockerStates[prevPgprocnum].next = prevTailReplace;
+				Assert(prev != prevTailPatch);
+				lockerStates[prev].next = prevTailPatch;
 			}
 		}
 
-		newState = state & (~(PAGE_STATE_LIST_TAIL_MASK | PAGE_STATE_LOCKED_FLAG | PAGE_STATE_NO_READ_FLAG));
+		/* ----------------------------------------------------------------
+		 * 4. Compose and try to publish the new page‑state word
+		 * ----------------------------------------------------------------*/
+		newState = state &
+			~(PAGE_STATE_LIST_TAIL_MASK |
+			  PAGE_STATE_LOCKED_FLAG |
+			  PAGE_STATE_NO_READ_FLAG);
+
+		/* Bump change‑counter if reads had been blocked */
 		if (O_PAGE_STATE_READ_IS_BLOCKED(state))
 			newState += PAGE_STATE_CHANGE_COUNT_ONE;
+
 		newState |= newTail;
 
-		if (pg_atomic_compare_exchange_u64(&header->state, &state, newState))
-			break;
+		if (pg_atomic_compare_exchange_u64(&hdr->state, &state, newState))
+			break;				/* Success!  Exit retry loop */
 
+		/* ----------------------------------------------------------------
+		 * 5. CAS failed – remember what we did and retry
+		 * ----------------------------------------------------------------*/
 		prevTail = tail;
-		prevTailReplace = newTail;
+		prevTailPatch = newTail;
+		/* `state` now holds the value returned by the failed CAS */
 	}
 
+	/* Cleanup the local list of locked pages */
 	my_locked_page_del(blkno);
-	pg_write_barrier();
 
-	pgprocnum = wakeupTail;
-	while (pgprocnum != PAGE_STATE_INVALID_PROCNO)
+	/* --------------------------------------------------------------------
+	 * 6. Waking collected waiters
+	 * --------------------------------------------------------------------*/
+	pg_write_barrier();			/* ensure list modifications are visible */
+
+	for (uint32 procno = wakeListHead;
+		 procno != PAGE_STATE_INVALID_PROCNO;)
 	{
-		LockerShmemState *lockerState = &lockerStates[pgprocnum];
-		PGPROC	   *waiter = GetPGProcByNumber(pgprocnum);
-		uint32		next = lockerState->next;
+		LockerShmemState *lockState = &lockerStates[procno];
+		uint32		next;
+		PGPROC	   *proc = GetPGProcByNumber(procno);
 
-		pg_read_barrier();
+		next = lockState->next;
+		lockState->pageWaiting = false;
 
-		lockerState->pageWaiting = false;
+		/*
+		 * Ensure memory access ordering.  The effect of statements above must
+		 * materialize before waking up the waiter, which must see
+		 * lockState->pageWaiting == false and can modify lockState->next.
+		 */
+		pg_memory_barrier();
 
-		pg_write_barrier();
-		PGSemaphoreUnlock(waiter->sem);
+		PGSemaphoreUnlock(proc->sem);
 
-		pgprocnum = next;
+		procno = next;
 	}
 }
 
